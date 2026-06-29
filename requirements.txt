@@ -1,0 +1,17 @@
+# AISaleAnalyst - Complete Project Dependencies
+
+# Core App & Web Scraping (Scrapers, Chrome Drivers & HTTP)
+requests>=2.31.0
+curl-cffi>=0.7.0
+beautifulsoup4>=4.12.0
+selenium>=4.15.0
+undetected-chromedriver>=3.5.0
+chrome-version>=0.1.0
+
+# AI Vision Models (OpenAI GPT-4o & Google Gemini)
+openai>=1.12.0
+google-genai>=0.1.0
+
+# Image Processing & Environment
+pillow>=10.0.0
+python-dotenv>=1.0.0

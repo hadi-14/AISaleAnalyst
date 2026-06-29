@@ -1,0 +1,177 @@
+"""
+vision.py
+=========
+AI-powered image analysis for AISaleAnalyst.
+
+Provides :func:`analyze_image`, which sends an estate-sale photo to the
+active AI provider (OpenAI GPT-4o or Gemini 2.5 Flash) and returns a
+structured dict describing the item in the image.
+"""
+
+import base64
+from pathlib import Path
+
+from PIL import Image
+
+from .config import AI_PROVIDER, fix_and_parse_json
+
+# Conditionally import whichever client was initialised in config
+if AI_PROVIDER == "openai":
+    from .config import openai_client
+else:
+    from .config import gemini_client
+
+# ---------------------------------------------------------------------------
+# Vision prompt
+# ---------------------------------------------------------------------------
+
+VISION_PROMPT = """\
+You are an expert estate sale reseller with 20 years experience flipping \
+items on eBay, Etsy, and Depop.
+Analyze this image carefully.
+
+BEFORE naming the item, look for ANY of these identifiers in the image:
+  • Brand/maker name (on decal, plate, label, or embossed)
+  • Model name or number (on badge, sticker, data plate, or casting)
+  • Year or generation (from styling cues, serial number format, or visible date stamps)
+  • Serial / part number (on metal plates or stickers)
+  • Size / capacity / spec (e.g. HP rating, length in feet, cc, oz)
+
+Strictly read the text and decals on the object. If the exact model name/number is not legible or visible, do NOT guess or hallucinate a random model number. Instead, identify key visual specifications and characteristics (e.g., horsepower rating like "8 HP", length like "16 ft", capacity, or engine type) and combine them with the brand to form the item name and query (e.g., "Troy-Bilt 8HP Chipper" or "Princecraft 16ft Boat").
+
+Use every identifier and spec you can read or estimate to build the most specific possible item name and eBay search query.
+
+Return ONLY a valid JSON object with these exact fields:
+{
+  "skip": false,
+  "exact_model_identified": true,
+  "item_name": "Brand Model# Year/Spec — e.g. Princecraft Super Pro 176 Boat 1998 or Troy-Bilt Tomahawk 5HP Chipper",
+  "condition_notes": "One line condition assessment",
+  "confidence": 88,
+  "ebay_condition": "Used — one of: New, Open Box, Used, For parts",
+  "ebay_search_query": "Brand Model# — e.g. Princecraft Super Pro 176 or Troy-Bilt Tomahawk (do NOT combine multiple distinct assets like boat and outboard HP, e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176', not 'Princecraft 176 Boat with 115 Outboard Motor')",
+  "ebay_fallback_query": "Brand Noun — e.g. Princecraft Boat or Troy-Bilt Chipper (broader query containing ONLY brand and category/noun, used if the specific query returns no results)",
+  "platform": "eBay",
+  "ebay_category_id": 26429,
+  "ai_value_low": 250,
+  "ai_value_high": 500,
+  "ai_value_notes": "One line reasoning for your estimate",
+  "estate_buy_price": 50,
+  "item_group": "NOUN-ONLY 1-2 word label for the MAIN object",
+  "resale_reasons": "Short keywords/phrase explaining why item holds resale appeal — e.g. Vintage, High demand, Made in USA, Rare collectible"
+}
+
+Rules:
+- Skip Conditions: Set "skip": true ONLY if the image is completely blurry, dark, empty, or is a house structural view (e.g., empty walls, window panes, cracks, doorways, floors with no items).
+- Do NOT skip general photos containing rooms, tables, shelves, or groups of items; instead, identify and analyze the single most prominent or valuable item in the photo.
+- Priority for Model/Product Identification: Prioritize identifying the exact brand and model number/name. If the exact model is not legible or identified, do NOT skip the image. Instead, set "exact_model_identified": false, and identify the general product/item type (e.g., "Princecraft Boat" or just "Boat") by combining the brand with the category/noun or any general visual specifications (e.g., HP rating, length, etc.).
+- confidence is 0-100 integer
+- platform is one of: eBay, Etsy, Depop, Facebook Marketplace
+- ebay_condition MUST be one of: New, Open Box, Used, For parts. Evaluate from visual wear, packaging, etc.
+- ebay_search_query MUST include brand + model number/name + spec if readable — \
+  never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176').
+- ebay_category_id is the numeric eBay Category ID (sacat) for the item. Refer to these common category IDs:
+  * Boats: 26429
+  * Boat Parts (including trolling motors/motors): 26443
+  * Outboard Engines & Components: 152737
+  * Chippers, Shredders & Mulchers: 20527
+  * Outdoor Power Equipment (Lawn mowers, generators): 29520
+  * Lawn Mowers: 151756
+  * Power Tools: 3312
+  * General Tools: 3110
+  If you don't know the exact ID, use a broad parent category ID (Motors: 6000, Home & Garden: 11700, Sporting Goods: 382).
+- ai_value_low and ai_value_high are YOUR expert USD estimate, independent of eBay (set realistic values)
+- estate_buy_price is typical estate sale price for this item (10-30% of resale value)
+
+Identifying Standalone/Detachable Equipment:
+- If the image focuses on a distinct, detachable, or valuable piece of equipment/accessory (such as a trolling motor, outboard motor, trailer, standalone tool attachment, or generator), identify the item as that specific accessory (e.g., "Minn Kota PowerDrive V2 Trolling Motor"), NOT the larger vehicle/boat it is attached to.
+- Only identify the item as the whole vehicle (e.g., "boat" or "car") if the photo shows the entire vehicle or a general view of it.
+
+item_group rules — READ CAREFULLY:
+  • Use the SHORTEST possible noun(s) that name the MAIN physical object in the frame
+  • Strip ALL adjectives, colors, brands, eras, conditions — nouns only
+  • If the image shows a DETAIL, INTERIOR, or PARTIAL VIEW of a larger object, label it
+    as the WHOLE object (e.g. a photo of a car dashboard → "car", boat interior → "boat")
+  • EXCEPTIONS: If the detail/part is a valuable standalone accessory or component being sold separately (e.g. trolling motor, outboard motor, trailer), label it as the accessory class (e.g. "trolling motor", "outboard motor", "trailer"), not the vehicle.
+  • Subtypes and varieties of the same object class MUST collapse to one label
+    (e.g. "pontoon", "bowrider", "speedboat", "fishing boat" → all become "boat")
+  • Two photos of the same physical object from different angles MUST produce the
+    EXACT same item_group string — imagine you are labeling the object, not the photo
+  • When uncertain between a specific subtype and a general noun, always prefer the
+    general noun (e.g. "compressor" not "air compressor", "jacket" not "denim jacket")
+
+- Return ONLY raw JSON — no markdown, no backticks, no trailing commas, no explanation\
+"""
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def analyze_image(image_path: str) -> dict:
+    """
+    Send an image to the active AI provider and extract item metadata.
+
+    The model is instructed to return a structured JSON object.  If the
+    image is unusable (blurry, empty, etc.) the model sets ``"skip": true``.
+
+    Parameters
+    ----------
+    image_path:
+        Absolute or relative path to the image file to analyse.
+
+    Returns
+    -------
+    dict
+        Parsed AI response.  Always contains at minimum ``{"skip": True}``
+        on any error or unrecognisable image.
+    """
+    import time
+    
+    retries = 3
+    retry_delay = 10  # starting delay on rate limit
+    
+    for attempt in range(retries):
+        try:
+            if AI_PROVIDER == "openai":
+                with open(image_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                ext  = Path(image_path).suffix.lower().replace(".", "")
+                mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+
+                response = openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text",      "text": VISION_PROMPT},
+                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                        ]
+                    }],
+                    max_tokens=500,
+                )
+                text = response.choices[0].message.content.strip()
+
+            else:  # gemini
+                img = Image.open(image_path)
+                response = gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[VISION_PROMPT, img],
+                )
+                text = response.text.strip()
+
+            return fix_and_parse_json(text)
+
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            # If 429 Rate Limit error occurs, perform exponential backoff retry
+            if ("429" in exc_str or "rate" in exc_str or "request" in exc_str) and attempt < retries - 1:
+                print(f"  [Rate Limit] 429 received on {Path(image_path).name} - Retrying in {retry_delay}s (Attempt {attempt+1}/{retries})...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            
+            print(f"  AI error on {image_path}: {exc}")
+            return {"skip": True}
+            
+    return {"skip": True}
