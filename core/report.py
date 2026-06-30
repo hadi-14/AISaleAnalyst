@@ -112,6 +112,26 @@ def build_row(rank: int, item: dict) -> str:
     resale_html = f'<div style="font-size:10px;color:#047857;font-weight:bold;margin-top:3px;">💡 Resale Appeal: {resale_reasons}</div>' if resale_reasons else ''
     query_html  = f'<div style="font-size:10px;color:#4b5563;margin-top:2px;">🔍 Search Query: <span style="font-family:monospace;background:#f3f4f6;padding:1px 4px;border-radius:2px;">{query_used}</span></div>' if query_used else ''
 
+    # Package dimensions display
+    pkg_l  = ai.get("pkg_length_in")
+    pkg_w  = ai.get("pkg_width_in")
+    pkg_h  = ai.get("pkg_height_in")
+    pkg_wt = ai.get("pkg_weight_lb")
+    dims_html = ""
+    if pkg_l is not None and pkg_w is not None and pkg_h is not None and pkg_wt is not None:
+        if pkg_l > 0 or pkg_w > 0 or pkg_h > 0 or pkg_wt > 0:
+            dims_html = f'<div style="font-size:10px;color:#4b5563;margin-top:2px;">📦 Package: <span style="font-family:monospace;background:#f3f4f6;padding:1px 4px;border-radius:2px;">{pkg_l}x{pkg_w}x{pkg_h} in | {pkg_wt} lbs</span></div>'
+
+    shipping_carrier = fin.get("shipping_carrier", "Estimated")
+    shipping_service = fin.get("shipping_service", "")
+    shipping_est_days = fin.get("shipping_est_days")
+    
+    # Format a nice sub-label under shipping
+    shipping_desc = ""
+    if shipping_carrier and shipping_service:
+        days_str = f" ({shipping_est_days}d)" if shipping_est_days else ""
+        shipping_desc = f'<div style="font-size:9px;color:#6b7280;text-align:left;margin-top:1px;">{shipping_carrier} {shipping_service}{days_str}</div>'
+
     return f"""
     <tr>
       <td class="rank">{rank}</td>
@@ -121,6 +141,7 @@ def build_row(rank: int, item: dict) -> str:
         <div style="margin-top:3px;">{cond_badge}<span class="item-notes" style="color:#666;font-size:11px;">{ai.get('condition_notes', '')}</span></div>
         {resale_html}
         {query_html}
+        {dims_html}
         <div>{badge_html}</div>
       </td>
       <td class="center">
@@ -131,6 +152,7 @@ def build_row(rank: int, item: dict) -> str:
       <td class="center">
         <div style="font-size:11px;color:#555;text-align:left;">eBay Fee: <span style="font-weight:bold;float:right;">-${ebay_fee:.2f}</span></div>
         <div style="font-size:11px;color:#555;text-align:left;margin-top:2px;">Shipping: <span style="font-weight:bold;float:right;">-${shipping:.2f}</span></div>
+        {shipping_desc}
         <div style="font-size:11px;font-weight:bold;color:#111;text-align:left;margin-top:3px;border-top:1px dashed #ddd;padding-top:2px;">Net: <span style="float:right;">${net_after_fees:.2f}</span></div>
       </td>
       <td class="center">
