@@ -689,6 +689,7 @@ def ProcessSaleUrl(
     output_dir: str = "EstateSalesOrgOutput",
     workers: int = 16,
     api_key: str | None = None,
+    max_images: int | None = None,
 ) -> dict:
     """
     Scrape all images from an EstateSales.org listing and download them.
@@ -736,6 +737,10 @@ def ProcessSaleUrl(
             driver.quit()
 
         print(f"\nTotal unique images collected: {len(unique_urls)}")
+
+        if max_images is not None and max_images > 0:
+            unique_urls = unique_urls[:max_images]
+            print(f"Limiting to first {max_images} images (MAX_IMAGES limit)")
 
         if not unique_urls:
             raise RuntimeError(f"[EstateSales.org Scraper Failed] 0 image URLs found for URL: '{url}' (check if page has gallery photos or is blocked by CAPTCHA)")

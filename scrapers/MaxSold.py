@@ -134,7 +134,7 @@ def download_one(task: dict) -> dict:
         return {"ok": False, "index": idx, "url": url, "error": str(e)}
 
 
-def download_auction(data: dict, output_dir: str, workers: int = 16) -> dict:
+def download_auction(data: dict, output_dir: str, workers: int = 16, max_images: int | None = None) -> dict:
     os.makedirs(output_dir, exist_ok=True)
 
     auction, items = extract_items(data)
@@ -193,6 +193,11 @@ def download_auction(data: dict, output_dir: str, workers: int = 16) -> dict:
         })
 
     total_images = global_idx
+    if max_images is not None and max_images > 0:
+        tasks = tasks[:max_images]
+        total_images = len(tasks)
+        print(f"Limiting to first {max_images} images (MAX_IMAGES limit)")
+        
     for t in tasks:
         t["total"] = total_images
 
@@ -247,12 +252,12 @@ def download_auction(data: dict, output_dir: str, workers: int = 16) -> dict:
     print(f"Manifest    : {manifest_path}")
     return manifest
 
-def ProcessSaleUrl(url: str, output_dir: str = "MaxSoldOutput", workers: int = 16) -> str:
+def ProcessSaleUrl(url: str, output_dir: str = "MaxSoldOutput", workers: int = 16, max_images: int | None = None) -> str:
     try:
         auction_id = extract_auction_id(url)
         build_id   = get_build_id(auction_id)
         data       = fetch_auction_data(auction_id, build_id)
-        manifest   = download_auction(data, output_dir, workers=workers)
+        manifest   = download_auction(data, output_dir, workers=workers, max_images=max_images)
         if not manifest or manifest.get("total_downloaded", 0) == 0:
             raise RuntimeError(f"[MaxSold Scraper Failed] 0 images extracted/downloaded for URL: '{url}'")
         return output_dir

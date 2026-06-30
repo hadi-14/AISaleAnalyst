@@ -111,7 +111,7 @@ def download_one(task: dict) -> dict:
         return {"ok": False, "index": idx, "url": url, "error": str(e)}
 
 
-def download_images(sale_data: dict, output_dir: str, workers: int = 16) -> dict:
+def download_images(sale_data: dict, output_dir: str, workers: int = 16, max_images: int | None = None) -> dict:
     os.makedirs(output_dir, exist_ok=True)
 
     # Handle both {"sale": {...}} and bare sale dict
@@ -125,6 +125,8 @@ def download_images(sale_data: dict, output_dir: str, workers: int = 16) -> dict
         raise ValueError(f"Cannot find 'pictures' key. Keys found: {list(sale_data.keys())}")
 
     pictures  = sale.get("pictures", [])
+    if max_images is not None and max_images > 0:
+        pictures = pictures[:max_images]
     sale_id   = sale.get("saleId", "unknown")
     sale_name = sale.get("name", "")
 
@@ -216,11 +218,11 @@ def download_images(sale_data: dict, output_dir: str, workers: int = 16) -> dict
     print(f"Manifest     : {manifest_path}")
     return manifest
 
-def ProcessSaleUrl(url: str, output_dir: str = "EstateSaleNetOutput", workers: int = 16) -> str:
+def ProcessSaleUrl(url: str, output_dir: str = "EstateSaleNetOutput", workers: int = 16, max_images: int | None = None) -> str:
     try:
         sale_id   = extract_sale_id(url)
         sale_data = fetch_sale_data(sale_id)
-        manifest  = download_images(sale_data, output_dir, workers=workers)
+        manifest  = download_images(sale_data, output_dir, workers=workers, max_images=max_images)
         if not manifest or manifest.get("total_downloaded", 0) == 0:
             raise RuntimeError(f"[EstateSales.net Scraper Failed] 0 images extracted/downloaded for URL: '{url}'")
         return output_dir

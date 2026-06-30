@@ -4,15 +4,15 @@ from .EstateSalesOrg import ProcessSaleUrl as ProcessEstateSalesOrgUrl
 
 import argparse
 
-def identifySite(url: str) -> str:
+def identifySite(url: str, max_images: int | None = None) -> str:
     if "estatesales.net" in url:
-        ProcessEstateSaleNetUrl(url)
+        ProcessEstateSaleNetUrl(url, max_images=max_images)
         FilePath = "EstateSaleNetOutput"
     elif "estatesales.org" in url:
-        ProcessEstateSalesOrgUrl(url)
+        ProcessEstateSalesOrgUrl(url, max_images=max_images)
         FilePath = "EstateSalesOrgOutput"
     elif "maxsold.com" in url:
-        ProcessMaxSoldUrl(url)
+        ProcessMaxSoldUrl(url, max_images=max_images)
         FilePath = "MaxSoldOutput"
     else:
         raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")

@@ -109,7 +109,7 @@ def main() -> None:
             print(f"Reusing existing images in '{target_folder}'. Skipping download.")
             images_folder = target_folder
         else:
-            images_folder = identifySite(url)
+            images_folder = identifySite(url, max_images=MAX_IMAGES)
             # Save the last URL to the directory for future runs
             try:
                 Path(images_folder).mkdir(parents=True, exist_ok=True)
