@@ -81,7 +81,41 @@ def main() -> None:
     images_folder = IMAGES_FOLDER
     if images_folder is None:
         url           = input("Enter Estate listing URL: ").strip()
-        images_folder = identifySite(url)
+        
+        # Determine the target output folder based on URL domain
+        if "estatesales.net" in url:
+            target_folder = "EstateSaleNetOutput"
+        elif "estatesales.org" in url:
+            target_folder = "EstateSalesOrgOutput"
+        elif "maxsold.com" in url:
+            target_folder = "MaxSoldOutput"
+        else:
+            raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")
+            
+        last_url_file = Path(target_folder) / "last_url.txt"
+        reuse_old = False
+        
+        if last_url_file.exists():
+            try:
+                last_url = last_url_file.read_text(encoding="utf-8").strip()
+                if last_url == url:
+                    ans = input(f"Found existing downloaded images for this URL in '{target_folder}'. Reuse them? (y/n) [y]: ").strip().lower()
+                    if ans != 'n':
+                        reuse_old = True
+            except Exception as e:
+                print(f"Error reading last URL info: {e}")
+                
+        if reuse_old:
+            print(f"Reusing existing images in '{target_folder}'. Skipping download.")
+            images_folder = target_folder
+        else:
+            images_folder = identifySite(url)
+            # Save the last URL to the directory for future runs
+            try:
+                Path(images_folder).mkdir(parents=True, exist_ok=True)
+                last_url_file.write_text(url, encoding="utf-8")
+            except Exception as e:
+                print(f"Warning: Could not save last URL metadata: {e}")
 
     folder      = Path(images_folder)
     extensions  = {".jpg", ".jpeg", ".png", ".webp"}
