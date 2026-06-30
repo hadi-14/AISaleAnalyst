@@ -19,6 +19,7 @@
   - Item name and noun-only category group.
   - Estimated value range (USD).
   - Item condition assessment (New, Open Box, Used, For Parts).
+  - **Estimated Package Dimensions & Weight**: Automatically estimates the boxed package size (`pkg_length_in`, `pkg_width_in`, `pkg_height_in`) and weight (`pkg_weight_lb`) to feed live carrier rate lookups.
   - **Resale Highlights ("Why Selected")**: Identifies key value drivers such as *"Vintage"*, *"High Demand"*, *"Made in USA"*, or *"Rare Collectible"*.
   - **Automated Search Query Generation**: Formulates optimized eBay search queries and fallback queries.
 - **Skipped Photos Audit**: Blurry, structural, or unidentified photos are flagged and preserved for manual review rather than silently dropped.
@@ -37,9 +38,11 @@ Prevents over-counting assets across multi-angle photo sets while strictly prese
   4. *Broad*: Bare search query + price floor.
 - **Dynamic Exclusion Filtering**: Uses AI to dynamically generate negative search terms (e.g., `-manual`, `-parts`, `-cover`) to exclude cheap accessories from whole-unit comps.
 
-### 📊 5. Financial Valuation & Profit Analytics
+### 📊 5. Live Shippo Shipping & Financial Analytics
+- **Live Carrier Rate Shopping**: Integrates with the **Shippo API** to fetch exact real-time USPS and UPS shipping rates based on package weight, dimensions, origin ZIP, and destination ZIP.
+- **Service Configuration**: Supports rate matching for the cheapest option across all carriers or filtering for specific shipping classes (e.g. USPS Ground Advantage, USPS Priority, UPS Ground).
+- **Graceful Fallbacks**: Smart local-pickup detection sets shipping to $0 for freight/vehicles (boats, cars, heavy lawnmowers), and a robust flat-rate fallback engine takes over if Shippo credentials are missing or the API goes down.
 - **Recency-Weighted Median Comps**: Calculates weighted median prices, favoring recent sales and filtering out pricing anomalies (outliers <30% or >300% of median).
-- **Category-Aware Shipping Estimates**: Dynamically estimates shipping based on size/weight (e.g., $0 for heavy local-pickup items like boats/furniture; tiered rates for small/medium goods).
 - **Net Margin Calculations**: Computes estimated eBay platform fees, net proceeds, expected profit, return on investment (ROI %), and recommended maximum estate buy limits.
 - **Confidence Penalty Logic**: Automatically reduces valuation confidence when fallback comp queries are triggered or when exact model numbers cannot be identified.
 
@@ -53,7 +56,7 @@ Prevents over-counting assets across multi-angle photo sets while strictly prese
 
 ```
 AISaleAnalyst/
-├── analyze.py                 # Main application entry point & pipeline orchestrator
+├── main.py                    # Main application entry point & pipeline orchestrator
 ├── requirements.txt           # Production Python dependencies
 ├── .env                       # API keys configuration (OpenAI / Gemini)
 ├── core/                      # Core business logic modules
@@ -61,6 +64,7 @@ AISaleAnalyst/
 │   ├── vision.py              # Vision model prompts & parallel image analysis
 │   ├── deduplication.py       # Fuzzy & AI deduplication engine
 │   ├── ebay.py                # Browserless eBay sold comps scraper & fallback logic
+│   ├── shipping.py            # Live Shippo API client & rate matching logic
 │   ├── financials.py          # Pricing medians, fee models, shipping & confidence logic
 │   └── report.py              # HTML report builder & template generator
 └── scrapers/                  # Platform-specific image collection scrapers
@@ -113,8 +117,22 @@ EBAY_DELAY=1.0
 # ===============================================================================
 # 🔍 DEDUPLICATION & VALUATION SETTINGS
 # ===============================================================================
+USE_DEDUP=true
 FUZZY_THRESHOLD=0.88
 USE_AI_DEDUP=true
+
+# ===============================================================================
+# 📦 SHIPPING (SHIPPO)
+# ===============================================================================
+SHIPPO_API_KEY=your_shippo_api_key_here
+SHIP_FROM_ZIP=60601
+SHIP_TO_ZIP=10001
+SHIP_SERVICE=cheapest
+SHIP_MANUAL_DIMS=false
+SHIP_MANUAL_LENGTH=12
+SHIP_MANUAL_WIDTH=10
+SHIP_MANUAL_HEIGHT=8
+SHIP_MANUAL_WEIGHT=3
 
 # ===============================================================================
 # 📊 REPORT DISPLAY & SORTING
@@ -129,7 +147,7 @@ TOP_N=20
 
 Run the main pipeline script:
 ```bash
-python analyze.py
+python main.py
 ```
 
 ### Execution Flow:
@@ -149,11 +167,22 @@ python analyze.py
 | `VISION_WORKERS` | `int` | `8` | Parallel worker threads for AI vision analysis. |
 | `EBAY_WORKERS` | `int` | `8` | Parallel worker threads for eBay comps scraping. |
 | `EBAY_DELAY` | `float` | `1.0` | Seconds delay between eBay HTTP requests. |
+| `USE_DEDUP` | `bool` | `true` | Enable/disable all deduplication (Stage 1 fuzzy and Stage 2 AI). |
 | `FUZZY_THRESHOLD` | `float` | `0.88` | Similarity threshold (0.0 to 1.0) for Stage 1 deduplication. |
 | `USE_AI_DEDUP` | `bool` | `true` | Enable/disable Stage 2 AI deduplication pass. |
+| `USE_2CAPTCHA` | `bool` | `true` | Enable/disable auto 2captcha solving (set to `false` for manual solve). |
 | `OUTPUT_HTML` | `str` | `"./demo_report.html"` | File path for the output HTML report. |
 | `SORT_BY` | `str` | `"roi"` | Primary sorting key (`roi`, `profit`, `median`, `confidence`). |
 | `TOP_N` | `int` | `20` | Maximum top opportunities shown in summary section. |
+| `SHIPPO_API_KEY` | `str` | `""` | Live API key from goshippo.com to fetch real-time carrier rates. |
+| `SHIP_FROM_ZIP` | `str` | `"60601"` | Origin ZIP code (where packages are shipped from). |
+| `SHIP_TO_ZIP` | `str` | `"10001"` | Destination ZIP code for shipping rate estimation. |
+| `SHIP_SERVICE` | `str` | `"cheapest"` | Preferred shipping service level (`cheapest`, `usps_ground`, `usps_priority`, `ups_ground`). |
+| `SHIP_MANUAL_DIMS` | `bool` | `false` | When true, skips AI package dimension estimates and uses fallback sizes. |
+| `SHIP_MANUAL_LENGTH` | `float` | `12.0` | Default fallback package length in inches. |
+| `SHIP_MANUAL_WIDTH` | `float` | `10.0` | Default fallback package width in inches. |
+| `SHIP_MANUAL_HEIGHT` | `float` | `8.0` | Default fallback package height in inches. |
+| `SHIP_MANUAL_WEIGHT` | `float` | `3.0` | Default fallback package weight in pounds. |
 
 ---
 

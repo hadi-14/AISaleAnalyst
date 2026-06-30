@@ -1,11 +1,11 @@
 """
-analyze.py
-==========
+main.py
+=======
 AISaleAnalyst — main entry point.
 
 Run
 ---
-    python analyze.py
+    python main.py
 
 The script prompts for an estate-sale listing URL, downloads images via
 :mod:`scrapers.ListingExtractor`, analyses each image with the configured
@@ -30,7 +30,7 @@ Project layout
 ::
 
     AISaleAnalyst/
-    ├── analyze.py          ← you are here
+    ├── main.py             ← you are here
     ├── core/               ← business logic
     │   ├── config.py
     │   ├── vision.py
@@ -50,7 +50,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_HTML, image_to_base64
+from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_HTML, image_to_base64, USE_DEDUP
 from core.deduplication import deduplicate
 from core.ebay import scrape_ebay_comps
 from core.report import generate_report
@@ -99,8 +99,8 @@ def main() -> None:
     progress_file = folder / "vision_progress.json"
     cached_data = {}
     if progress_file.exists():
-        ans = input(f"Found existing progress file '{progress_file.name}'. Resume from previous run? (y/n) [y]: ").strip().lower()
-        if ans != 'n':
+        ans = input(f"Found existing progress file '{progress_file.name}'. Resume from previous run? (y/n) [n]: ").strip().lower()
+        if ans == 'y':
             try:
                 with open(progress_file, "r", encoding="utf-8") as f:
                     progress_list = json.load(f)
@@ -153,11 +153,16 @@ def main() -> None:
                         "thumb": thumb_data,
                     })
                 else:
+                    pkg_l = ai_result.get("pkg_length_in", 0)
+                    pkg_w = ai_result.get("pkg_width_in", 0)
+                    pkg_h = ai_result.get("pkg_height_in", 0)
+                    pkg_wt = ai_result.get("pkg_weight_lb", 0)
                     print(
                         f"[{counter}/{total_images}] {img_path.name} -> "
                         f"{ai_result.get('item_name')} "
                         f"| group: {ai_result.get('item_group')} "
-                        f"| {ai_result.get('confidence')}%"
+                        f"| {ai_result.get('confidence')}% "
+                        f"| pkg: {pkg_l}x{pkg_w}x{pkg_h} in, {pkg_wt} lbs"
                     )
                     raw_results.append({
                         "image": str(img_path),
@@ -191,7 +196,12 @@ def main() -> None:
         return
 
     # --- Step 2: Deduplication
-    unique_results = deduplicate(raw_results)
+    if USE_DEDUP:
+        print("Running deduplication...")
+        unique_results = deduplicate(raw_results)
+    else:
+        print("Deduplication bypassed (USE_DEDUP=False).")
+        unique_results = raw_results
 
     # --- Step 3: eBay comps (Multi-threaded HTTP workers)
     print(f"\nFetching eBay comps for {len(unique_results)} unique items across {EBAY_WORKERS} parallel workers...\n")
