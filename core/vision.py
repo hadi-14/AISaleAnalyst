@@ -109,6 +109,8 @@ item_group rules — READ CAREFULLY:
   • Include padding/box walls in your dimension estimate (add ~2 inches per side).
   • For local-pickup / freight items (boats, vehicles, large furniture, tractors) set all four values to 0.
   • Be realistic — a wristwatch ships in a ~6x4x3in 0.5lb box; a power drill in a ~14x10x8in 6lb box.
+  • IMPORTANT: Do NOT overestimate sizes or weights. Overly large dimensions drastically inflate shipping costs and ruin ROI.
+  • Keep dimensions as tight and small as safely possible. If uncertain, err on the realistic average rather than the maximum.
   • These values feed a live shipping API, so accuracy matters.
 
 - Return ONLY raw JSON — no markdown, no backticks, no trailing commas, no explanation\
@@ -160,14 +162,17 @@ def analyze_image(image_path: str) -> dict:
                         ]
                     }],
                     max_tokens=500,
+                    temperature=0.0,
                 )
                 text = response.choices[0].message.content.strip()
 
             else:  # gemini
+                from google.genai import types
                 img = Image.open(image_path)
                 response = gemini_client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=[VISION_PROMPT, img],
+                    config=types.GenerateContentConfig(temperature=0.0)
                 )
                 text = response.text.strip()
 
