@@ -261,6 +261,13 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
     prices:     list[float] = []
     comp_links: list[str]   = []
 
+    # If eBay explicitly states 0 results (but shows "results matching fewer words"), abort
+    heading = soup.select_one("h1.srp-controls__count-heading")
+    if heading:
+        heading_text = heading.get_text(strip=True).lower()
+        if heading_text.startswith("0 result") or "no exact matches" in heading_text:
+            return [], []
+
     cards = soup.select("div.su-card-container__attributes")
 
     for card in cards:
@@ -514,7 +521,7 @@ def scrape_ebay_comps(
             "median":       f"${median_val:.0f}",
             "high":         f"${high_val:.0f}",
             "count":        len(prices),
-            "link":         comp_links[0] if comp_links else used_url,
+            "link":         used_url,
             "links":        comp_links,
             "fallback_used": False,
             "query_used":   cleaned_query,
