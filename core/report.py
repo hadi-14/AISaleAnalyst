@@ -66,24 +66,24 @@ def build_row(rank: int, item: dict) -> str:
 
     # Condition badge
     cond_text = ai.get("ebay_condition") or "Used"
-    cond_badge = f'<span style="display:inline-block;background:#f3f4f6;color:#374151;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-right:6px;">{cond_text}</span>'
+    cond_badge = f'<span style="display:inline-block;background:#f3f4f6;color:#374151;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-right:8px;">{cond_text}</span>'
 
     # Badges for match status
     badges = []
     
     # Check if exact model was not identified
     if ai.get("exact_model_identified") is False:
-        badges.append('<span style="display:inline-block;background:#fef3c7;color:#d97706;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-top:4px;margin-right:4px;">⚠️ Exact model details not identified</span>')
+        badges.append('<span style="display:inline-block;background:#fef3c7;color:#d97706;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Exact model details not identified</span>')
 
     # Check if fallback query was used
     if comps.get("fallback_used"):
-        badges.append('<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-top:4px;margin-right:4px;">ℹ️ Based on similar model</span>')
+        badges.append('<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">ℹ️ Based on similar model</span>')
         
     # Check if confidence is low or zero comps found
     if comps.get("count", 0) == 0:
-        badges.append('<span style="display:inline-block;background:#fef2f2;color:#b91c1c;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-top:4px;margin-right:4px;">⚠️ Valuation estimate only (0 comps)</span>')
+        badges.append('<span style="display:inline-block;background:#fef2f2;color:#b91c1c;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Valuation estimate only (0 comps)</span>')
     elif conf < 70:
-        badges.append('<span style="display:inline-block;background:#fffbeb;color:#b45309;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-top:4px;margin-right:4px;">⚠️ Low confidence match</span>')
+        badges.append('<span style="display:inline-block;background:#fffbeb;color:#b45309;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Low confidence match</span>')
         
     badge_html = "".join(badges)
 
@@ -92,10 +92,10 @@ def build_row(rank: int, item: dict) -> str:
     verified_links = comps.get("links", [])
     if verified_links:
         for idx, url in enumerate(verified_links[:3], 1):
-            link_buttons.append(f'<a href="{url}" target="_blank" style="display:inline-block;margin:2px;font-size:10px;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;padding:2px 5px;border-radius:3px;background:#f0f9ff;">Comp #{idx}</a>')
+            link_buttons.append(f'<a href="{url}" target="_blank" style="display:inline-block;margin:3px;font-size:11px;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;padding:4px 8px;border-radius:4px;background:#f0f9ff;font-weight:500;">Comp #{idx}</a>')
     
     if comp_link and comp_link != "#":
-        link_buttons.append(f'<a href="{comp_link}" target="_blank" style="display:inline-block;margin:2px;font-size:10px;color:#ffffff;text-decoration:none;background:#2563eb;padding:2px 6px;border-radius:3px;font-weight:bold;">All Comps</a>')
+        link_buttons.append(f'<a href="{comp_link}" target="_blank" style="display:inline-block;margin:3px;font-size:11px;color:#ffffff;text-decoration:none;background:#2563eb;padding:4px 8px;border-radius:4px;font-weight:bold;">All Comps</a>')
         
     link_html = "".join(link_buttons) if link_buttons else "—"
 
@@ -109,8 +109,8 @@ def build_row(rank: int, item: dict) -> str:
     resale_reasons = ai.get("resale_reasons") or ""
     query_used     = comps.get("query_used") or ai.get("ebay_search_query") or ""
 
-    resale_html = f'<div style="font-size:10px;color:#047857;font-weight:bold;margin-top:3px;">💡 Resale Appeal: {resale_reasons}</div>' if resale_reasons else ''
-    query_html  = f'<div style="font-size:10px;color:#4b5563;margin-top:2px;">🔍 Search Query: <span style="font-family:monospace;background:#f3f4f6;padding:1px 4px;border-radius:2px;">{query_used}</span></div>' if query_used else ''
+    resale_html = f'<div style="font-size:11px;color:#047857;font-weight:bold;margin-top:6px;">💡 Resale Appeal: {resale_reasons}</div>' if resale_reasons else ''
+    query_html  = f'<div style="font-size:11px;color:#4b5563;margin-top:4px;">🔍 Search Query: <span style="font-family:monospace;background:#f3f4f6;padding:2px 6px;border-radius:3px;">{query_used}</span></div>' if query_used else ''
 
     # Package dimensions display
     pkg_l  = ai.get("pkg_length_in")
@@ -120,7 +120,7 @@ def build_row(rank: int, item: dict) -> str:
     dims_html = ""
     if pkg_l is not None and pkg_w is not None and pkg_h is not None and pkg_wt is not None:
         if pkg_l > 0 or pkg_w > 0 or pkg_h > 0 or pkg_wt > 0:
-            dims_html = f'<div style="font-size:10px;color:#4b5563;margin-top:2px;">📦 Package: <span style="font-family:monospace;background:#f3f4f6;padding:1px 4px;border-radius:2px;">{pkg_l}x{pkg_w}x{pkg_h} in | {pkg_wt} lbs</span></div>'
+            dims_html = f'<div style="font-size:11px;color:#4b5563;margin-top:4px;">📦 Package: <span style="font-family:monospace;background:#f3f4f6;padding:2px 6px;border-radius:3px;">{pkg_l}x{pkg_w}x{pkg_h} in | {pkg_wt} lbs</span></div>'
 
     shipping_carrier = fin.get("shipping_carrier", "Estimated")
     shipping_service = fin.get("shipping_service", "")
@@ -130,38 +130,38 @@ def build_row(rank: int, item: dict) -> str:
     shipping_desc = ""
     if shipping_carrier and shipping_service:
         days_str = f" ({shipping_est_days}d)" if shipping_est_days else ""
-        shipping_desc = f'<div style="font-size:9px;color:#6b7280;text-align:left;margin-top:1px;">{shipping_carrier} {shipping_service}{days_str}</div>'
+        shipping_desc = f'<div style="font-size:10px;color:#6b7280;text-align:left;margin-top:2px;">{shipping_carrier} {shipping_service}{days_str}</div>'
 
     return f"""
     <tr>
       <td class="rank">{rank}</td>
       <td class="center">{img_tag}</td>
       <td>
-        <div class="item-name">{ai.get('item_name', 'Unknown')}</div>
-        <div style="margin-top:3px;">{cond_badge}<span class="item-notes" style="color:#666;font-size:11px;">{ai.get('condition_notes', '')}</span></div>
+        <div class="item-name" style="font-size:14px; margin-bottom:4px;">{ai.get('item_name', 'Unknown')}</div>
+        <div style="margin-top:4px;">{cond_badge}<span class="item-notes" style="color:#666;font-size:12px;">{ai.get('condition_notes', '')}</span></div>
         {resale_html}
         {query_html}
         {dims_html}
         <div>{badge_html}</div>
       </td>
       <td class="center">
-        <div style="font-weight:bold;font-size:13px;">${sell_price:.0f}</div>
-        <div style="font-size:10px;color:#888">{comps['low']} – {comps['high']}</div>
-        <div style="font-size:9px;color:#999;margin-top:2px;">{count_text}</div>
+        <div style="font-weight:bold;font-size:14px;">${sell_price:.0f}</div>
+        <div style="font-size:11px;color:#888;margin-top:2px;">{comps['low']} – {comps['high']}</div>
+        <div style="font-size:10px;color:#999;margin-top:4px;">{count_text}</div>
       </td>
       <td class="center">
-        <div style="font-size:11px;color:#555;text-align:left;">eBay Fee: <span style="font-weight:bold;float:right;">-${ebay_fee:.2f}</span></div>
-        <div style="font-size:11px;color:#555;text-align:left;margin-top:2px;">Shipping: <span style="font-weight:bold;float:right;">-${shipping:.2f}</span></div>
+        <div style="font-size:12px;color:#555;text-align:left;">eBay Fee: <span style="font-weight:bold;float:right;">-${ebay_fee:.2f}</span></div>
+        <div style="font-size:12px;color:#555;text-align:left;margin-top:3px;">Shipping: <span style="font-weight:bold;float:right;">-${shipping:.2f}</span></div>
         {shipping_desc}
-        <div style="font-size:11px;font-weight:bold;color:#111;text-align:left;margin-top:3px;border-top:1px dashed #ddd;padding-top:2px;">Net: <span style="float:right;">${net_after_fees:.2f}</span></div>
+        <div style="font-size:12px;font-weight:bold;color:#111;text-align:left;margin-top:4px;border-top:1px dashed #ddd;padding-top:4px;">Net: <span style="float:right;">${net_after_fees:.2f}</span></div>
       </td>
       <td class="center">
-        <div style="font-weight:bold;font-size:13px;color:#b45309;">${recommended_max_buy:.0f}</div>
-        <div style="font-size:10px;color:#888;margin-top:2px;">Est. Buy: ${buy_price:.0f}</div>
+        <div style="font-weight:bold;font-size:14px;color:#b45309;">${recommended_max_buy:.0f}</div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">Est. Buy: ${buy_price:.0f}</div>
       </td>
       <td class="center">
-        <div style="font-weight:bold;font-size:13px;color:{profit_color};">${profit:.0f}</div>
-        <div style="font-weight:bold;font-size:11px;color:#a07000;margin-top:2px;">{roi:.0f}% ROI</div>
+        <div style="font-weight:bold;font-size:14px;color:{profit_color};">${profit:.0f}</div>
+        <div style="font-weight:bold;font-size:12px;color:#a07000;margin-top:4px;">{roi:.0f}% ROI</div>
       </td>
       <td class="center">
         <div class="conf-wrap">
@@ -224,54 +224,55 @@ _THEAD_SKIPPED = """\
 
 _THEAD = """\
 <tr>
-  <th class="center" style="width:36px">#</th>
-  <th class="center" style="width:90px">Photo</th>
+  <th class="center" style="width:40px">#</th>
+  <th class="center" style="width:100px">Photo</th>
   <th>Item Details</th>
-  <th class="center">Expected Resale</th>
-  <th class="center" style="width:160px">Fees & Shipping</th>
-  <th class="center">Recommended Buy Limit</th>
-  <th class="center">Expected Net Return</th>
-  <th class="center">Match Confidence</th>
-  <th class="center">Verify Comps</th>
+  <th class="center" style="width:120px">Expected Resale</th>
+  <th class="center" style="width:180px">Fees & Shipping</th>
+  <th class="center" style="width:140px">Recommended Buy Limit</th>
+  <th class="center" style="width:120px">Expected Net Return</th>
+  <th class="center" style="width:120px">Match Confidence</th>
+  <th class="center" style="width:140px">Verify Comps</th>
 </tr>"""
 
 _CSS = """\
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: Arial, sans-serif; font-size: 13px; background: #fff; color: #1c1c1c; }
-.header { background: #1c1c1c; color: #fff; padding: 20px 32px; }
-.header h1 { font-size: 18px; font-weight: bold; letter-spacing: 0.5px; }
-.header p { font-size: 11px; color: #aaa; margin-top: 5px; }
-.summary { display: flex; border-bottom: 1px solid #e0e0e0; background: #f5f5f5; }
-.stat { flex: 1; padding: 14px 20px; border-right: 1px solid #e0e0e0; }
+body { font-family: Arial, sans-serif; font-size: 13px; background: #f9fafb; color: #1c1c1c; }
+.header { background: #1c1c1c; color: #fff; padding: 24px 32px; }
+.header h1 { font-size: 20px; font-weight: bold; letter-spacing: 0.5px; }
+.header p { font-size: 12px; color: #aaa; margin-top: 6px; }
+.summary { display: flex; border-bottom: 1px solid #e0e0e0; background: #fff; }
+.stat { flex: 1; padding: 18px 24px; border-right: 1px solid #e0e0e0; }
 .stat:last-child { border-right: none; }
-.stat .val { font-size: 20px; font-weight: bold; }
-.stat .lbl { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.6px; margin-top: 3px; }
-.section-title { background: #f0f0f0; padding: 12px 32px; font-size: 12px; font-weight: bold;
-  text-transform: uppercase; letter-spacing: 1px; color: #555; border-bottom: 1px solid #e0e0e0;
-  border-top: 2px solid #1c1c1c; margin-top: 24px; }
-.section-title.gold { border-top-color: #a07000; color: #a07000; }
+.stat .val { font-size: 24px; font-weight: bold; color: #111; }
+.stat .lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px; }
+.section-title { background: #f3f4f6; padding: 16px 32px; font-size: 13px; font-weight: bold;
+  text-transform: uppercase; letter-spacing: 1px; color: #4b5563; border-bottom: 1px solid #e5e7eb;
+  border-top: 2px solid #1c1c1c; margin-top: 32px; }
+.section-title.gold { border-top-color: #a07000; color: #a07000; background: #fefcf8; }
 .section-title.skipped { border-top-color: #b91c1c; color: #b91c1c; background: #fef2f2; }
-.sort-note { padding: 8px 32px; font-size: 11px; color: #888; background: #fafafa; border-bottom: 1px solid #eee; }
-table { width: 100%; border-collapse: collapse; }
-thead th { background: #2c2c2c; color: #fff; padding: 10px 12px; text-align: left;
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: bold; }
+.sort-note { padding: 12px 32px; font-size: 12px; color: #6b7280; background: #fff; border-bottom: 1px solid #e5e7eb; }
+table { width: 100%; border-collapse: collapse; background: #fff; }
+thead th { background: #1f2937; color: #f9fafb; padding: 14px 16px; text-align: left;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: bold; }
 thead th.center { text-align: center; }
+tbody tr { border-bottom: 1px solid #e5e7eb; }
 tbody tr:nth-child(even) { background: #fafafa; }
-tbody tr:hover { background: #f0f0f0; }
-tbody td { padding: 10px 12px; border-bottom: 1px solid #eeeeee; vertical-align: middle; }
+tbody tr:hover { background: #f3f4f6; }
+tbody td { padding: 18px 16px; vertical-align: middle; }
 tbody td.center { text-align: center; }
-.item-name { font-weight: bold; font-size: 13px; }
-.item-notes { font-size: 11px; color: #777; margin-top: 2px; }
-.rank { color: #ccc; font-weight: bold; font-size: 15px; text-align: center; }
-.tier { font-size: 11px; font-weight: bold; }
-.tier.high { color: #1c7a3a; }
+.item-name { font-weight: bold; font-size: 14px; color: #111; }
+.item-notes { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.rank { color: #d1d5db; font-weight: bold; font-size: 18px; text-align: center; }
+.tier { font-size: 12px; font-weight: bold; }
+.tier.high { color: #047857; }
 .tier.med  { color: #a07000; }
-.tier.low  { color: #999; }
-.conf-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.conf-val { font-size: 12px; font-weight: bold; }
-.bar-bg { width: 60px; height: 3px; background: #e0e0e0; border-radius: 2px; }
-.bar-fill { height: 3px; background: #1c1c1c; border-radius: 2px; }
-.footer { padding: 14px 32px; font-size: 10px; color: #aaa; border-top: 1px solid #e0e0e0; margin-top: 24px; }"""
+.tier.low  { color: #9ca3af; }
+.conf-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.conf-val { font-size: 13px; font-weight: bold; color: #374151; }
+.bar-bg { width: 64px; height: 4px; background: #e5e7eb; border-radius: 2px; }
+.bar-fill { height: 4px; background: #1f2937; border-radius: 2px; }
+.footer { padding: 20px 32px; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; margin-top: 32px; text-align: center; }"""
 
 
 def generate_report(items: list, output_path: str, skipped_items: list = None) -> None:
