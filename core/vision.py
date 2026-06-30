@@ -45,6 +45,7 @@ Return ONLY a valid JSON object with these exact fields:
 {
   "skip": false,
   "exact_model_identified": true,
+  "multi_item_detected": false,
   "item_name": "Brand Model# Year/Spec — e.g. Princecraft Super Pro 176 Boat 1998 or Troy-Bilt Tomahawk 5HP Chipper",
   "condition_notes": "One line condition assessment",
   "confidence": 88,
@@ -67,23 +68,20 @@ Return ONLY a valid JSON object with these exact fields:
 
 Rules:
 - Skip Conditions: Set "skip": true ONLY if the image is completely blurry, dark, empty, or is a house structural view (e.g., empty walls, window panes, cracks, doorways, floors with no items).
-- Do NOT skip general photos containing rooms, tables, shelves, or groups of items; instead, identify and analyze the single most prominent or valuable item in the photo.
+- Multi-Item Flag: Set "multi_item_detected": true if the photo shows a cluttered scene, shelf, or group of multiple distinct saleable items (e.g., 5 different vases, a box of random tools, a shelf of books). You should still identify the single most prominent/valuable item in the photo, but flagging it alerts the human reviewer to hidden inventory.
 - Priority for Model/Product Identification: Prioritize identifying the exact brand and model number/name. If the exact model is not legible or identified, do NOT skip the image. Instead, set "exact_model_identified": false, and identify the general product/item type (e.g., "Princecraft Boat" or just "Boat") by combining the brand with the category/noun or any general visual specifications (e.g., HP rating, length, etc.).
-- confidence is 0-100 integer
+- confidence is 0-100 integer. Base this ONLY on how clearly you can identify the object from the photo. Do NOT artificially lower this score just because an exact model number is missing (we apply penalties for that downstream).
 - platform is one of: eBay, Etsy, Depop, Facebook Marketplace
 - ebay_condition MUST be one of: New, Open Box, Used, For parts. Evaluate from visual wear, packaging, etc.
 - ebay_search_query MUST include brand + model number/name + spec if readable — \
   never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176').
 - ebay_category_id is the numeric eBay Category ID (sacat) for the item. Refer to these common category IDs:
-  * Boats: 26429
-  * Boat Parts (including trolling motors/motors): 26443
-  * Outboard Engines & Components: 152737
-  * Chippers, Shredders & Mulchers: 20527
-  * Outdoor Power Equipment (Lawn mowers, generators): 29520
-  * Lawn Mowers: 151756
-  * Power Tools: 3312
-  * General Tools: 3110
-  If you don't know the exact ID, use a broad parent category ID (Motors: 6000, Home & Garden: 11700, Sporting Goods: 382).
+  * Antiques: 20081 | Art: 550 | Books: 267 | Clothing: 11450 | Coins & Paper Money: 11116
+  * Collectibles: 1 | Electronics: 293 | Furniture: 20091 | Home & Garden: 11700 | Jewelry: 281
+  * Watches: 31387 | Kitchenware: 20625 | Toys: 220 | Sporting Goods: 382 | Tools: 3110
+  * Cameras: 625 | Musical Instruments: 619 | Video Games: 1249 | Pottery & Glass: 870 | Stamps: 260
+  * Boats: 26429 | Boat Parts: 26443 | Outboard Engines: 152737 | Lawn Mowers: 151756 | Power Tools: 3312
+  If you don't know the exact ID, use the closest broad parent category ID.
 - ai_value_low and ai_value_high are YOUR expert USD estimate, independent of eBay (set realistic values)
 - estate_buy_price is typical estate sale price for this item (10-30% of resale value)
 

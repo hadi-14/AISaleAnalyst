@@ -71,6 +71,10 @@ def build_row(rank: int, item: dict) -> str:
     # Badges for match status
     badges = []
     
+    # Multi-item flag
+    if ai.get("multi_item_detected"):
+        badges.append('<span style="display:inline-block;background:#fce7f3;color:#be185d;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">📦 Multi-Item Photo</span>')
+
     # Check if exact model was not identified
     if ai.get("exact_model_identified") is False:
         badges.append('<span style="display:inline-block;background:#fef3c7;color:#d97706;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Exact model details not identified</span>')

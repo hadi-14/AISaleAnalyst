@@ -9,11 +9,12 @@
 ### 📸 1. Multi-Source Image Collectors
 - **Automated Web Scrapers**: Built-in support for scraping listing galleries directly from major estate sale platforms:
   - **EstateSales.net**
-  - **EstateSales.org**
+  - **EstateSales.org** *(Note: Uses `undetected-chromedriver`. If you hit AWS WAF CAPTCHAs, it will prompt you for manual solving, or you can enable `USE_2CAPTCHA=true` for automated solving).*
   - **MaxSold**
 - **Local & Direct Input**: Support for analyzing local image folders or direct image URL batches.
 
 ### 🧠 2. AI Vision Identification (GPT-4o / Gemini 2.5)
+- **Automatic Provider Selection**: The app automatically uses OpenAI if `OPENAI_API_KEY` is present in `.env`, and falls back to Gemini if only `GEMINI_API_KEY` is provided.
 - **Parallel Multi-Threading**: Analyzes image batches concurrently (`VISION_WORKERS`) for ultra-fast processing on large sales.
 - **Rich Asset Metadata Extraction**:
   - Item name and noun-only category group.
@@ -159,6 +160,38 @@ python main.py
 
 ---
 
+## 📊 Sample AI Output
+
+The vision pipeline converts raw photos into structured JSON payloads like this:
+
+```json
+{
+  "skip": false,
+  "exact_model_identified": true,
+  "multi_item_detected": false,
+  "item_name": "DeWalt DWS779 12-inch Sliding Compound Miter Saw",
+  "condition_notes": "Used, minor sawdust and scuffs",
+  "confidence": 95,
+  "ebay_condition": "Used",
+  "ebay_search_query": "DeWalt DWS779 Miter Saw",
+  "ebay_fallback_query": "DeWalt Miter Saw",
+  "platform": "eBay",
+  "ebay_category_id": 3312,
+  "ai_value_low": 250,
+  "ai_value_high": 350,
+  "ai_value_notes": "Popular contractor saw, holds value well",
+  "estate_buy_price": 75,
+  "item_group": "saw",
+  "resale_reasons": "High demand, Contractor grade",
+  "pkg_length_in": 34,
+  "pkg_width_in": 24,
+  "pkg_height_in": 20,
+  "pkg_weight_lb": 56.0
+}
+```
+
+---
+
 ## ⚙️ Environment Configuration Reference (`.env`)
 
 | Variable | Type | Default | Description |
@@ -187,5 +220,7 @@ python main.py
 ---
 
 ## 📋 License & Credits
+
+This project is licensed under the **MIT License**.
 
 Developed for high-efficiency resale analysis, inventory auditing, and estate valuation automation.
