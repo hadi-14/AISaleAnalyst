@@ -91,7 +91,7 @@ def build_row(rank: int, item: dict) -> str:
     link_buttons = []
     verified_links = comps.get("links", [])
     if verified_links:
-        for idx, url in enumerate(verified_links, 1):
+        for idx, url in enumerate(verified_links[:3], 1):
             link_buttons.append(f'<a href="{url}" target="_blank" style="display:inline-block;margin:2px;font-size:10px;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;padding:2px 5px;border-radius:3px;background:#f0f9ff;">Comp #{idx}</a>')
     
     if comp_link and comp_link != "#":
@@ -228,7 +228,7 @@ _THEAD = """\
   <th class="center" style="width:90px">Photo</th>
   <th>Item Details</th>
   <th class="center">Expected Resale</th>
-  <th class="center" style="width:130px">Fees & Shipping</th>
+  <th class="center" style="width:160px">Fees & Shipping</th>
   <th class="center">Recommended Buy Limit</th>
   <th class="center">Expected Net Return</th>
   <th class="center">Match Confidence</th>

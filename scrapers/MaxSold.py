@@ -248,11 +248,18 @@ def download_auction(data: dict, output_dir: str, workers: int = 16) -> dict:
     return manifest
 
 def ProcessSaleUrl(url: str, output_dir: str = "MaxSoldOutput", workers: int = 16) -> str:
-    auction_id = extract_auction_id(url)
-    
-    build_id   = get_build_id(auction_id)
-    data       = fetch_auction_data(auction_id, build_id)
-    download_auction(data, output_dir, workers=workers)
+    try:
+        auction_id = extract_auction_id(url)
+        build_id   = get_build_id(auction_id)
+        data       = fetch_auction_data(auction_id, build_id)
+        manifest   = download_auction(data, output_dir, workers=workers)
+        if not manifest or manifest.get("total_downloaded", 0) == 0:
+            raise RuntimeError(f"[MaxSold Scraper Failed] 0 images extracted/downloaded for URL: '{url}'")
+        return output_dir
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise
+        raise RuntimeError(f"[MaxSold Scraper Error] Failed to extract images from '{url}': {e}") from e
 
 def main():
     parser = argparse.ArgumentParser(description="Fast concurrent MaxSold auction image downloader")

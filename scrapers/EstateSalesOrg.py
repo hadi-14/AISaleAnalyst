@@ -34,6 +34,18 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+# ── Patch undetected_chromedriver to suppress WinError 6 on shutdown ─────────
+def _safe_uc_del(self):
+    try:
+        self.quit()
+    except Exception:
+        pass
+
+try:
+    uc.Chrome.__del__ = _safe_uc_del
+except Exception:
+    pass
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -166,80 +178,121 @@ def extract_aws_waf_params(driver) -> dict | None:
 
 def _inject_waf_token(driver, voucher: str, token: str, target_url: str):
     """
-    Inject the WAF solution cookies WITHOUT a page refresh.
-
-    Strategy:
-      1. Set cookies via Selenium's add_cookie (works while on the domain).
-      2. Also inject via document.cookie JS (belt-and-suspenders).
-      3. Navigate directly to target_url — a fresh GET picks up the new cookies,
-         so the WAF sees them on the very first request of the new page load.
-         This avoids the refresh→WAF-check-before-cookie race condition.
+    Inject the WAF solution cookies and trigger a complete fresh navigation.
     """
-    domain = re.search(r'https?://([^/]+)', driver.current_url).group(1)
+    host_domain = re.search(r'https?://([^/]+)', driver.current_url).group(1)
+    parts = host_domain.split('.')
+    root_domain = '.'.join(parts[-2:]) if len(parts) >= 2 else host_domain
 
-    cookie_attrs = {"domain": domain, "path": "/", "secure": True, "samesite": "Lax"}
-
-    if voucher:
+    val_to_use = token or voucher
+    if val_to_use:
         try:
-            driver.add_cookie({"name": "captcha_voucher", "value": voucher, **cookie_attrs})
+            driver.execute_script(f"""
+                try {{
+                    if (window.awsWafCaptcha && typeof window.awsWafCaptcha.setToken === 'function') {{
+                        window.awsWafCaptcha.setToken('{val_to_use}');
+                    }}
+                }} catch(e) {{}}
+            """)
         except Exception:
             pass
-        # Also set via JS in case Selenium's CDP path disagrees on domain
-        driver.execute_script(
-            f"document.cookie = 'captcha_voucher={voucher}; path=/; domain={domain}; SameSite=Lax';"
-        )
 
-    if token:
-        try:
-            driver.add_cookie({"name": "aws-waf-token", "value": token, **cookie_attrs})
-        except Exception:
-            pass
-        driver.execute_script(
-            f"document.cookie = 'aws-waf-token={token}; path=/; domain={domain}; SameSite=Lax';"
-        )
+    domains_to_set = list(set([host_domain, root_domain, f".{root_domain}"]))
 
-    # Small pause so the browser commits the cookies before the navigation
+    for dom in domains_to_set:
+        cookie_attrs = {"domain": dom, "path": "/", "secure": True, "samesite": "Lax"}
+        if voucher:
+            try:
+                driver.add_cookie({"name": "captcha_voucher", "value": voucher, **cookie_attrs})
+            except Exception:
+                pass
+            try:
+                driver.execute_script(f"document.cookie = 'captcha_voucher={voucher}; path=/; domain={dom}; SameSite=Lax; Secure';")
+            except Exception:
+                pass
+        if token:
+            try:
+                driver.add_cookie({"name": "aws-waf-token", "value": token, **cookie_attrs})
+            except Exception:
+                pass
+            try:
+                driver.execute_script(f"document.cookie = 'aws-waf-token={token}; path=/; domain={dom}; SameSite=Lax; Secure';")
+            except Exception:
+                pass
+
+    try:
+        origin_url = f"https://{host_domain}/"
+        if voucher:
+            driver.execute_cdp_cmd("Network.setCookie", {
+                "name": "captcha_voucher", "value": voucher, "url": origin_url, "path": "/", "secure": True
+            })
+            driver.execute_cdp_cmd("Network.setCookie", {
+                "name": "captcha_voucher", "value": voucher, "domain": f".{root_domain}", "path": "/", "secure": True
+            })
+        if token:
+            driver.execute_cdp_cmd("Network.setCookie", {
+                "name": "aws-waf-token", "value": token, "url": origin_url, "path": "/", "secure": True
+            })
+            driver.execute_cdp_cmd("Network.setCookie", {
+                "name": "aws-waf-token", "value": token, "domain": f".{root_domain}", "path": "/", "secure": True
+            })
+    except Exception as e:
+        print(f"  [CAPTCHA] CDP cookie injection note: {e}")
+
     time.sleep(0.5)
-
-    # Navigate (not refresh) — cookies are sent on the initial GET
+    # Perform actual GET navigation + refresh to force Chrome to issue new HTTP requests with cookies
     driver.get(target_url)
+    time.sleep(1.5)
+    driver.refresh()
     time.sleep(3)
+
+
+def is_waf_blocking(driver) -> bool:
+    """
+    Return True if an active AWS WAF CAPTCHA challenge is currently blocking the page.
+    """
+    try:
+        title = driver.title.lower()
+        if any(w in title for w in ["captcha", "security check", "verify", "human", "challenge"]):
+            return True
+
+        src = driver.page_source.lower()
+        if any(w in src for w in ["awswaf-captcha", "verify you are human", "solve the captcha", "unusual traffic"]):
+            return True
+
+        # Check if WAF iframe or modal is present
+        if driver.find_elements(By.XPATH, "//iframe[contains(@src, 'awswaf')] | //div[contains(@id, 'aws-waf')] | //div[contains(@id, 'captcha')]"):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
     """
     Detect and solve AWS WAF CAPTCHA via 2captcha AmazonTaskProxyless.
-
-    Key design decisions vs the naive approach:
-    - iv/context expire in ~30 s on the WAF side.  We submit the task
-      immediately after extraction, but the solve itself takes 60-90 s.
-      By the time the token arrives the original iv/context are stale,
-      BUT the token/voucher themselves are what the WAF ultimately validates —
-      they are fresh JWT credentials issued by 2captcha's solving worker.
-    - We inject via _inject_waf_token (navigate, not refresh) so the new
-      cookies land on the very first HTTP request of the next page load,
-      before the WAF has a chance to issue a new challenge.
-    - If the WAF still challenges after injection we do ONE silent retry:
-      reload to get new iv/context, submit a new task, inject again.
-
-    Returns True if the CAPTCHA was dealt with, False if no CAPTCHA detected.
     """
-    page_src = driver.page_source.lower()
-
-    if (
-        "captcha"         not in page_src and
-        "robot"           not in page_src and
-        "unusual traffic" not in page_src and
-        "awswaf"          not in page_src
-    ):
+    if not is_waf_blocking(driver):
         return False
 
-    print("  [CAPTCHA] Detected!")
+    print("  [CAPTCHA] AWS WAF Challenge Detected!")
 
-    # Snapshot the URL we need to land on after solving
+    use_2captcha = os.getenv("USE_2CAPTCHA", "true").lower() in ("true", "1", "yes", "on")
+    if not api_key or not use_2captcha:
+        print("  [CAPTCHA] Automatic 2captcha solving disabled (USE_2CAPTCHA=false or key unset).")
+        print("  [CAPTCHA] Please solve the CAPTCHA manually in the browser window, then press Enter here to continue...")
+        input()
+        return True
+
     target_url = driver.current_url
 
-    # Extract params — submit to 2captcha immediately to start the clock
+    if _retry:
+        driver.get(target_url)
+        time.sleep(3)
+        if not is_waf_blocking(driver):
+            print("  [CAPTCHA] WAF cleared after reload!")
+            return True
+
     params = extract_aws_waf_params(driver)
 
     if not params:
@@ -247,14 +300,12 @@ def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
         input()
         return True
 
+    user_agent = driver.execute_script("return navigator.userAgent")
+
     print(f"  [CAPTCHA] websiteKey : {params['websiteKey'][:55]}...")
     print(f"  [CAPTCHA] iv         : {params['iv']}")
     print(f"  [CAPTCHA] context    : {params['context'][:45]}...")
-    print(f"  [CAPTCHA] challenge  : {params['challengeScript'] or '(none — will likely fail)'}")
-    print(f"  [CAPTCHA] captcha.js : {params['captchaScript']   or '(none)'}")
-
-    if not params["challengeScript"]:
-        print("  [CAPTCHA] WARNING: challengeScript missing — solve may fail.")
+    print(f"  [CAPTCHA] userAgent  : {user_agent[:60]}...")
 
     task = {
         "type":       "AmazonTaskProxyless",
@@ -262,6 +313,7 @@ def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
         "websiteKey": params["websiteKey"],
         "iv":         params["iv"],
         "context":    params["context"],
+        "userAgent":  user_agent,
     }
     if params["challengeScript"]:
         task["challengeScript"] = params["challengeScript"]
@@ -286,10 +338,10 @@ def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
         return True
 
     task_id = create_resp["taskId"]
-    print(f"  [CAPTCHA] Task {task_id} submitted in {time.time() - submit_time:.1f}s — polling...")
+    print(f"  [CAPTCHA] Task {task_id} submitted in {time.time() - submit_time:.1f}s — polling every 2s...")
 
-    for attempt in range(30):  # 30 × 5 s = 150 s max
-        time.sleep(5)
+    for attempt in range(60):
+        time.sleep(2)
         elapsed = time.time() - submit_time
 
         try:
@@ -310,10 +362,7 @@ def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
             print(f"  [CAPTCHA] Error after {elapsed:.0f}s: {err}")
 
             if err == "ERROR_CAPTCHA_UNSOLVABLE" and not _retry:
-                # Fresh page → fresh iv/context → retry once
                 print("  [CAPTCHA] Reloading for fresh params and retrying once...")
-                driver.get(target_url)
-                time.sleep(4)
                 return solve_captcha_2captcha(driver, api_key, _retry=True)
 
             print("  [CAPTCHA] Solve manually then press Enter...")
@@ -322,26 +371,26 @@ def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
 
         if status == "ready":
             solution = result_resp.get("solution", {})
-            voucher  = solution.get("captcha_voucher", "")
-            token    = solution.get("existing_token", "")
-            print(f"  [CAPTCHA] Solved in {elapsed:.0f}s! Injecting token...")
+            voucher  = str(solution.get("captcha_voucher") or solution.get("voucher") or "")
+            token    = str(solution.get("existing_token") or solution.get("token") or solution.get("aws-waf-token") or solution.get("cookie") or voucher)
+            print(f"  [CAPTCHA] Solved in {elapsed:.1f}s! Solution keys: {list(solution.keys())}. Injecting token...")
 
-            # Inject cookies and navigate (not refresh) to target URL
             _inject_waf_token(driver, voucher, token, target_url)
 
-            # Verify the WAF didn't challenge again
-            post_src = driver.page_source.lower()
-            if "awswaf" in post_src or "captcha" in post_src:
+            # Check if active AWS WAF challenge is still blocking after injection & reload
+            if is_waf_blocking(driver):
                 if not _retry:
-                    print("  [CAPTCHA] WAF re-challenged after injection — retrying once...")
+                    print("  [CAPTCHA] WAF still active after injection — retrying once with fresh parameters...")
                     return solve_captcha_2captcha(driver, api_key, _retry=True)
                 else:
                     print("  [CAPTCHA] Still challenged after retry — solve manually then press Enter...")
                     input()
 
+            print("  [CAPTCHA] Verification successful! WAF passed cleanly.")
             return True
 
-        print(f"  [CAPTCHA] Processing... ({elapsed:.0f}s, attempt {attempt + 1}/30)")
+        if (attempt + 1) % 5 == 0:
+            print(f"  [CAPTCHA] Processing... ({elapsed:.0f}s elapsed)")
 
     print("  [CAPTCHA] Timed out — solve manually then press Enter...")
     input()
@@ -351,22 +400,29 @@ def solve_captcha_2captcha(driver, api_key: str, _retry: bool = False) -> bool:
 # ── Popup dismissal ────────────────────────────────────────────────────────────
 
 def dismiss_popup(driver):
-    """Close the subscribe/newsletter popup if it appears."""
-    try:
-        close_btn = WebDriverWait(driver, 4).until(
-            EC.element_to_be_clickable((
-                By.XPATH,
-                "//div[contains(@class,'subscribe-modal')]//a[@aria-label='Close']"
-            ))
-        )
-        close_btn.click()
-        print("  [POPUP] Subscribe modal dismissed.")
-        time.sleep(0.5)
-    except Exception:
-        pass  # No popup — move on silently
+    """Close subscribe / reveal modals if they appear after page load or CAPTCHA solve."""
+    xpaths = [
+        "//a[contains(@class, 'close-reveal-modal')]",
+        "//div[contains(@class,'subscribe-modal')]//a[@aria-label='Close']",
+        "//a[contains(@class, 'close-modal')]",
+        "//button[contains(@class, 'close-reveal-modal')]",
+    ]
+    for xpath in xpaths:
+        try:
+            elements = driver.find_elements(By.XPATH, xpath)
+            for el in elements:
+                if el.is_displayed():
+                    try:
+                        driver.execute_script("arguments[0].click();", el)
+                    except Exception:
+                        el.click()
+                    print("  [POPUP] Reveal / Subscribe modal dismissed successfully.")
+                    time.sleep(0.5)
+        except Exception:
+            pass
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 print_lock = Lock()
 
@@ -650,11 +706,12 @@ def ProcessSaleUrl(
     -------
     manifest dict (same structure as manifest.json)
     """
-    if api_key is None:
+    use_2captcha = os.getenv("USE_2CAPTCHA", "true").lower() in ("true", "1", "yes", "on")
+    if api_key is None and use_2captcha:
         api_key = os.getenv("TWOCAPTCHA_API_KEY")
 
-    if not api_key:
-        print("⚠  TWOCAPTCHA_API_KEY not set — CAPTCHA will require manual solve.")
+    if not use_2captcha or not api_key:
+        print("ℹ  CAPTCHA Mode: Manual solve active (USE_2CAPTCHA=false or TWOCAPTCHA_API_KEY unset).")
 
     # ── Launch browser ─────────────────────────────────────────────────────
     options = uc.ChromeOptions()
@@ -673,17 +730,24 @@ def ProcessSaleUrl(
     driver = uc.Chrome(**driver_kwargs)
 
     try:
-        unique_urls = _collect_all_urls(driver, url, api_key)
-    finally:
-        driver.quit()
+        try:
+            unique_urls = _collect_all_urls(driver, url, api_key)
+        finally:
+            driver.quit()
 
-    print(f"\nTotal unique images collected: {len(unique_urls)}")
+        print(f"\nTotal unique images collected: {len(unique_urls)}")
 
-    if not unique_urls:
-        print("No images found — exiting.")
-        return {}
+        if not unique_urls:
+            raise RuntimeError(f"[EstateSales.org Scraper Failed] 0 image URLs found for URL: '{url}' (check if page has gallery photos or is blocked by CAPTCHA)")
 
-    return _download_images(unique_urls, url, output_dir, workers)
+        manifest = _download_images(unique_urls, url, output_dir, workers)
+        if not manifest or manifest.get("total_downloaded", 0) == 0:
+            raise RuntimeError(f"[EstateSales.org Scraper Failed] 0 images downloaded for URL: '{url}'")
+        return manifest
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise
+        raise RuntimeError(f"[EstateSales.org Scraper Error] Failed to extract images from '{url}': {e}") from e
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────

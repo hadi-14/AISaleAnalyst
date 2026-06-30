@@ -15,7 +15,7 @@ def identifySite(url: str) -> str:
         ProcessMaxSoldUrl(url)
         FilePath = "MaxSoldOutput"
     else:
-        raise ValueError("Unsupported URL. Please provide a valid EstateSales.net or MaxSold URL.")
+        raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")
     
     return FilePath
 

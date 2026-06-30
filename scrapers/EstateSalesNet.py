@@ -217,9 +217,17 @@ def download_images(sale_data: dict, output_dir: str, workers: int = 16) -> dict
     return manifest
 
 def ProcessSaleUrl(url: str, output_dir: str = "EstateSaleNetOutput", workers: int = 16) -> str:
-    sale_id    = extract_sale_id(url)
-    sale_data  = fetch_sale_data(sale_id)
-    download_images(sale_data, output_dir, workers=workers)
+    try:
+        sale_id   = extract_sale_id(url)
+        sale_data = fetch_sale_data(sale_id)
+        manifest  = download_images(sale_data, output_dir, workers=workers)
+        if not manifest or manifest.get("total_downloaded", 0) == 0:
+            raise RuntimeError(f"[EstateSales.net Scraper Failed] 0 images extracted/downloaded for URL: '{url}'")
+        return output_dir
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise
+        raise RuntimeError(f"[EstateSales.net Scraper Error] Failed to extract images from '{url}': {e}") from e
 
 
 def main():

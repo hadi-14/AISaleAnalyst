@@ -1,1 +1,55 @@
+# ===============================================================================
+# 🚫 AISaleAnalyst - Git Ignore Rules
+# ===============================================================================
+
+# --- Environment & Security ---
 .env
+.env.local
+.env.*.local
+
+# --- Python Bytecode & Cache (recursive across all folders) ---
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Downloaded Images & Scraper Outputs ---
+images/
+*/images/
+images_*
+images-*/
+EstateSaleNetOutput/
+*/EstateSaleNetOutput/
+EstateSalesOrgOutput/
+*/EstateSalesOrgOutput/
+MaxSoldOutput/
+*/MaxSoldOutput/
+estate_sale_*/
+maxsold_*/
+*Output*/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+
+# --- Progress State & Temporary Debug Logs ---
+vision_progress.json
+*_progress.json
+logs.txt
+*.log
+*.tmp
+
+# --- Generated HTML Reports & Debug Sweeps ---
+demo_report.html
+demo_report_test.html
+analyze.html
+ebay_debug*.html
+
+# --- IDE & System Artifacts ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
