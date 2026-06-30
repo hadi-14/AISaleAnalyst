@@ -88,8 +88,39 @@ FUZZY_THRESHOLD: float = _env_float("FUZZY_THRESHOLD", 0.88)
 #: When True, run a second AI-powered deduplication pass after fuzzy matching.
 USE_AI_DEDUP: bool = _env_bool("USE_AI_DEDUP", True)
 
+#: When True, enable deduplication. When False, bypass all deduplication passes.
+USE_DEDUP: bool = _env_bool("USE_DEDUP", True)
+
+#: When True, enable automatic CAPTCHA solving via 2captcha. Set to False for manual solve.
+USE_2CAPTCHA: bool = _env_bool("USE_2CAPTCHA", True)
+
 #: Legacy headless flag (retained for signature compatibility).
 EBAY_HEADLESS: bool = _env_bool("EBAY_HEADLESS", False)
+
+# ---------------------------------------------------------------------------
+# Shipping (Shippo) configuration
+# ---------------------------------------------------------------------------
+
+#: Shippo live API key. Leave blank to fall back to flat-rate estimates.
+SHIPPO_API_KEY: str | None = _env_str("SHIPPO_API_KEY", None)
+
+#: Origin ZIP code — where the seller ships packages FROM.
+SHIP_FROM_ZIP: str = _env_str("SHIP_FROM_ZIP", "60601")
+
+#: Destination ZIP code — used for rate estimation.
+SHIP_TO_ZIP: str = _env_str("SHIP_TO_ZIP", "10001")
+
+#: Preferred service key: "cheapest" | "usps_ground" | "usps_priority" | "ups_ground"
+SHIP_SERVICE: str = _env_str("SHIP_SERVICE", "cheapest")
+
+#: When True, use manual dimensions instead of AI-estimated ones.
+SHIP_MANUAL_DIMS: bool = _env_bool("SHIP_MANUAL_DIMS", False)
+
+#: Manual dimension overrides (inches / pounds). Only used when SHIP_MANUAL_DIMS=True.
+SHIP_MANUAL_LENGTH: float = _env_float("SHIP_MANUAL_LENGTH", 12.0)
+SHIP_MANUAL_WIDTH:  float = _env_float("SHIP_MANUAL_WIDTH",  10.0)
+SHIP_MANUAL_HEIGHT: float = _env_float("SHIP_MANUAL_HEIGHT",  8.0)
+SHIP_MANUAL_WEIGHT: float = _env_float("SHIP_MANUAL_WEIGHT",  3.0)
 
 # ---------------------------------------------------------------------------
 # AI provider detection & client initialisation

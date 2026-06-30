@@ -58,7 +58,11 @@ Return ONLY a valid JSON object with these exact fields:
   "ai_value_notes": "One line reasoning for your estimate",
   "estate_buy_price": 50,
   "item_group": "NOUN-ONLY 1-2 word label for the MAIN object",
-  "resale_reasons": "Short keywords/phrase explaining why item holds resale appeal — e.g. Vintage, High demand, Made in USA, Rare collectible"
+  "resale_reasons": "Short keywords/phrase explaining why item holds resale appeal — e.g. Vintage, High demand, Made in USA, Rare collectible",
+  "pkg_length_in": 12,
+  "pkg_width_in": 8,
+  "pkg_height_in": 6,
+  "pkg_weight_lb": 2.5
 }
 
 Rules:
@@ -99,6 +103,13 @@ item_group rules — READ CAREFULLY:
     EXACT same item_group string — imagine you are labeling the object, not the photo
   • When uncertain between a specific subtype and a general noun, always prefer the
     general noun (e.g. "compressor" not "air compressor", "jacket" not "denim jacket")
+
+- Package dimension rules (pkg_length_in, pkg_width_in, pkg_height_in, pkg_weight_lb):
+  • Estimate the BOXED shipping dimensions in inches and weight in pounds as if you were packaging this item to ship via USPS or UPS.
+  • Include padding/box walls in your dimension estimate (add ~2 inches per side).
+  • For local-pickup / freight items (boats, vehicles, large furniture, tractors) set all four values to 0.
+  • Be realistic — a wristwatch ships in a ~6x4x3in 0.5lb box; a power drill in a ~14x10x8in 6lb box.
+  • These values feed a live shipping API, so accuracy matters.
 
 - Return ONLY raw JSON — no markdown, no backticks, no trailing commas, no explanation\
 """

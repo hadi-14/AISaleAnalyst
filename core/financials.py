@@ -14,6 +14,7 @@ get_sort_key(item)
 """
 
 from .config import SORT_BY
+from .shipping import get_shipping_rate
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -32,38 +33,13 @@ def estimate_ebay_fee(sell_price: float, category_id: int | None) -> float:
     return (sell_price * 0.1325) + 0.30
 
 
+# estimate_shipping_cost() has been replaced by the live Shippo integration.
+# See core/shipping.py for the full implementation.
+# This stub is retained only for any legacy references.
 def estimate_shipping_cost(sell_price: float, item_group: str, item_name: str = "") -> float:
-    """Estimate shipping cost based on item group and size/weight characteristics."""
-    text = f"{item_group} {item_name}".lower().strip()
-    
-    # 1. Local Pickup / Heavy Freight ($0.00)
-    local_pickup_groups = {
-        "boat", "vehicle", "car", "motorcycle", "trailer", "chipper",
-        "lawnmower", "tractor", "shredder", "furniture", "sofa", "table",
-        "freezer", "refrigerator", "chest", "snowblower"
-    }
-    if any(g in text for g in local_pickup_groups):
-        return 0.0
-
-    # 2. Large / Heavy Electronics & Equipment ($35.00)
-    heavy_shippable = {
-        "generator", "amplifier", "receiver", "stereo", "speaker", "mower",
-        "compressor", "saw", "drill press", "lathe", "welder", "outboard", "trolling motor"
-    }
-    if any(g in text for g in heavy_shippable):
-        return 35.0
-
-    # 3. Small / Lightweight Collectibles & Wearables ($8.00)
-    lightweight = {
-        "watch", "jewelry", "ring", "necklace", "camera", "lens", "coin",
-        "stamp", "card", "shirt", "jacket", "coat", "hat", "glasses", "sunglasses",
-        "brooch", "pendant", "earring", "manual", "book", "cd", "dvd", "game", "toy", "figurine"
-    }
-    if any(g in text for g in lightweight):
-        return 8.0
-
-    # 4. Standard medium item default ($15.00)
-    return 15.0
+    """Deprecated: use get_shipping_rate() from core.shipping instead."""
+    from .shipping import _flat_rate_fallback
+    return _flat_rate_fallback(item_group, item_name)["cost"]
 
 
 def calc_financials(item: dict) -> dict:
@@ -104,9 +80,27 @@ def calc_financials(item: dict) -> dict:
         hi         = float(ai.get("ai_value_high", 0) or 0)
         sell_price = (lo + hi) / 2
 
-    # Calculate fees and shipping
+    # Calculate eBay fees
     ebay_fee = estimate_ebay_fee(sell_price, cat_id)
-    shipping = estimate_shipping_cost(sell_price, item_group, item_name)
+
+    # Live Shippo shipping rate using AI-estimated package dimensions
+    pkg_l  = float(ai.get("pkg_length_in", 0) or 0)
+    pkg_w  = float(ai.get("pkg_width_in",  0) or 0)
+    pkg_h  = float(ai.get("pkg_height_in", 0) or 0)
+    pkg_wt = float(ai.get("pkg_weight_lb", 0) or 0)
+
+    shipping_detail = get_shipping_rate(
+        length=pkg_l,
+        width=pkg_w,
+        height=pkg_h,
+        weight=pkg_wt,
+        item_group=item_group,
+        item_name=item_name,
+    )
+    shipping = shipping_detail["cost"]
+
+    # Store shipping detail on the item for the report
+    item["shipping_detail"] = shipping_detail
 
     # Net proceeds after fees
     net_after_fees = sell_price - ebay_fee - shipping
@@ -149,6 +143,10 @@ def calc_financials(item: dict) -> dict:
         "sell_price":          sell_price,
         "ebay_fee":            round(ebay_fee, 2),
         "shipping":            round(shipping, 2),
+        "shipping_carrier":    shipping_detail.get("carrier", "Estimated"),
+        "shipping_service":    shipping_detail.get("service", ""),
+        "shipping_est_days":   shipping_detail.get("est_days"),
+        "shipping_source":     shipping_detail.get("source", "fallback"),
         "net_after_fees":      round(net_after_fees, 2),
         "recommended_max_buy": round(recommended_max_buy, 2),
         "buy_price":           round(buy_price, 2),
