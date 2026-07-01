@@ -76,7 +76,7 @@ EBAY_WORKERS: int = _env_int("EBAY_WORKERS", 8)
 #: Seconds to sleep after each eBay page load (avoids rate-limiting).
 EBAY_DELAY: float = _env_float("EBAY_DELAY", 1.0)
 
-#: Report sort key.  One of: "roi" | "profit" | "median" | "confidence"
+#: Report sort key.  One of: "roi" | "profit" | "mean" | "confidence"
 SORT_BY: str = _env_str("SORT_BY", "roi")
 
 #: Maximum rows shown in the "Top Opportunities" section of the report.

@@ -43,7 +43,7 @@ Prevents over-counting assets across multi-angle photo sets while strictly prese
 - **Live Carrier Rate Shopping**: Integrates with the **Shippo API** to fetch exact real-time USPS and UPS shipping rates based on package weight, dimensions, origin ZIP, and destination ZIP.
 - **Service Configuration**: Supports rate matching for the cheapest option across all carriers or filtering for specific shipping classes (e.g. USPS Ground Advantage, USPS Priority, UPS Ground).
 - **Graceful Fallbacks**: Smart local-pickup detection sets shipping to $0 for freight/vehicles (boats, cars, heavy lawnmowers), and a robust flat-rate fallback engine takes over if Shippo credentials are missing or the API goes down.
-- **Recency-Weighted Median Comps**: Calculates weighted median prices, favoring recent sales and filtering out pricing anomalies (outliers <30% or >300% of median).
+- **Recency-Weighted Mean Comps**: Calculates weighted mean prices, favoring recent sales and filtering out pricing anomalies (outliers <30% or >300% of median).
 - **Net Margin Calculations**: Computes estimated eBay platform fees, net proceeds, expected profit, return on investment (ROI %), and recommended maximum estate buy limits.
 - **Confidence Penalty Logic**: Automatically reduces valuation confidence when fallback comp queries are triggered or when exact model numbers cannot be identified.
 

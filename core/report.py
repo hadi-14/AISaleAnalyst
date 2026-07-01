@@ -303,7 +303,7 @@ def generate_report(items: list, output_path: str, skipped_items: list = None) -
     print(f"  [report] Building report for {len(items)} items ({len(skipped_items)} skipped)...")
 
     # --- Ensure every item has a comps dict (guard against scraper failures)
-    _NA_COMPS = {"low": "N/A", "median": "N/A", "high": "N/A", "count": 0, "link": ""}
+    _NA_COMPS = {"low": "N/A", "mean": "N/A", "high": "N/A", "count": 0, "link": ""}
     for item in items:
         if "comps" not in item:
             name = item.get("ai", {}).get("item_name", "?")

@@ -263,10 +263,13 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
 
     # If eBay explicitly states 0 results (but shows "results matching fewer words"), abort
     heading = soup.select_one("h1.srp-controls__count-heading")
-    if heading:
-        heading_text = heading.get_text(strip=True).lower()
-        if heading_text.startswith("0 result") or "no exact matches" in heading_text:
-            return [], []
+    if not heading:
+        # Not a valid search results page (likely bot challenge or error page)
+        return [], []
+        
+    heading_text = heading.get_text(strip=True).lower()
+    if heading_text.startswith("0 result") or "no exact matches" in heading_text:
+        return [], []
 
     cards = soup.select("div.su-card-container__attributes")
 
@@ -299,7 +302,6 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
                         if href and href not in comp_links:
                             comp_links.append(href)
 
-    # Fallback: sweep all price spans if card layout found nothing
     if not prices:
         for el in soup.select("span.s-card__price:not(.strikethrough), [class*='s-card__price']"):
             txt = el.get_text(strip=True)
@@ -350,7 +352,7 @@ def _fetch_prices_from_url(search_url: str, query: str) -> tuple[list[float], li
 
 def process_ebay_prices(prices_recent_first: list[float]) -> tuple[float, float, float]:
     """
-    Filter out obvious outliers and calculate the weighted median sold price.
+    Filter out obvious outliers and calculate the weighted mean sold price.
     Recent listings (first in the list) are weighted more heavily than older ones.
     """
     if not prices_recent_first:
@@ -377,10 +379,9 @@ def process_ebay_prices(prices_recent_first: list[float]) -> tuple[float, float,
             weight = 1
         weighted_pool.extend([p] * weight)
 
-    weighted_pool.sort()
-    weighted_median = weighted_pool[len(weighted_pool) // 2]
+    mean_val = sum(weighted_pool) / len(weighted_pool)
 
-    return min(filtered), weighted_median, max(filtered)
+    return min(filtered), mean_val, max(filtered)
 
 
 # ---------------------------------------------------------------------------
@@ -481,18 +482,27 @@ def scrape_ebay_comps(
             "bare query+floor" if strict_floor else "bare query",
         ]
 
-        prices:     list[float] = []
-        comp_links: list[str]   = []
-        used_url:   str         = attempts[0]
+        best_prices: list[float] = []
+        best_links: list[str]   = []
+        best_url: str         = attempts[0]
 
         for url, label in zip(attempts, labels):
             prices, comp_links = _fetch_prices_from_url(url, cleaned_query)
-            used_url = url
-            if prices:
+            
+            if len(prices) > len(best_prices):
+                best_prices = prices
+                best_links = comp_links
+                best_url = url
+
+            if len(prices) >= 3:
                 if label != "exclusions+floor+condition":
                     print(f"  [fallback -> {label}]")
                 break
-            print(f"  [0 results with {label} - trying next]")
+            print(f"  [{len(prices)} results with {label} - trying next]")
+
+        prices = best_prices
+        comp_links = best_links
+        used_url = best_url
 
         if not prices:
             if fallback_query:
@@ -509,16 +519,16 @@ def scrape_ebay_comps(
                 res["fallback_used"] = True
                 return res
             return {
-                "low": "N/A", "median": "N/A", "high": "N/A",
+                "low": "N/A", "mean": "N/A", "high": "N/A",
                 "count": 0, "link": used_url, "links": [],
                 "fallback_used": False, "query_used": cleaned_query,
             }
 
-        low_val, median_val, high_val = process_ebay_prices(prices)
+        low_val, mean_val, high_val = process_ebay_prices(prices)
 
         return {
             "low":          f"${low_val:.0f}",
-            "median":       f"${median_val:.0f}",
+            "mean":         f"${mean_val:.0f}",
             "high":         f"${high_val:.0f}",
             "count":        len(prices),
             "link":         used_url,
@@ -530,7 +540,7 @@ def scrape_ebay_comps(
     except Exception as exc:
         print(f"  eBay scrape error: {exc}")
         return {
-            "low": "N/A", "median": "N/A", "high": "N/A",
+            "low": "N/A", "mean": "N/A", "high": "N/A",
             "count": 0, "link": "", "links": [],
             "fallback_used": False, "query_used": query,
         }

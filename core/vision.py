@@ -107,6 +107,14 @@ item_group rules — READ CAREFULLY:
   • Include padding/box walls in your dimension estimate (add ~2 inches per side).
   • For local-pickup / freight items (boats, vehicles, large furniture, tractors) set all four values to 0.
   • Be realistic — a wristwatch ships in a ~6x4x3in 0.5lb box; a power drill in a ~14x10x8in 6lb box.
+  • Examples to guide your estimates:
+      - Smartphone/Watch: 6x4x3 in, 1 lb
+      - Shoes: 14x10x6 in, 3 lb
+      - Small Appliance (Toaster/Blender): 16x12x10 in, 8 lb
+      - Hand Power Tool: 16x12x8 in, 6 lb
+      - Desktop Computer: 24x20x12 in, 25 lb
+      - Acoustic Guitar: 48x20x8 in, 15 lb
+      - Stereo Receiver: 20x18x10 in, 20 lb
   • IMPORTANT: Do NOT overestimate sizes or weights. Overly large dimensions drastically inflate shipping costs and ruin ROI.
   • Keep dimensions as tight and small as safely possible. If uncertain, err on the realistic average rather than the maximum.
   • These values feed a live shipping API, so accuracy matters.
@@ -161,6 +169,7 @@ def analyze_image(image_path: str) -> dict:
                     }],
                     max_tokens=500,
                     temperature=0.0,
+                    response_format={"type": "json_object"},
                 )
                 text = response.choices[0].message.content.strip()
 
@@ -170,7 +179,10 @@ def analyze_image(image_path: str) -> dict:
                 response = gemini_client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=[VISION_PROMPT, img],
-                    config=types.GenerateContentConfig(temperature=0.0)
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json"
+                    )
                 )
                 text = response.text.strip()
 

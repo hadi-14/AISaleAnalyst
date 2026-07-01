@@ -57,7 +57,7 @@ def calc_financials(item: dict) -> dict:
     ----------
     item:
         Item dict that must contain ``"ai"`` and ``"comps"`` sub-dicts.
-        ``"comps"`` must have a ``"median"`` key (``"$NNN"`` or ``"N/A"``).
+        ``"comps"`` must have a ``"mean"`` key (``"$NNN"`` or ``"N/A"``).
 
     Returns
     -------
@@ -72,9 +72,9 @@ def calc_financials(item: dict) -> dict:
     item_name  = ai.get("item_name") or ""
     cat_id     = ai.get("ebay_category_id")
 
-    median_str = comps.get("median", "N/A")
-    if median_str != "N/A":
-        sell_price = float(median_str.replace("$", "").replace(",", ""))
+    mean_str = comps.get("mean", "N/A")
+    if mean_str != "N/A":
+        sell_price = float(mean_str.replace("$", "").replace(",", ""))
     else:
         lo         = float(ai.get("ai_value_low",  0) or 0)
         hi         = float(ai.get("ai_value_high", 0) or 0)
@@ -203,6 +203,6 @@ def get_sort_key(item: dict) -> float:
     if SORT_BY == "confidence":
         return float(item["ai"].get("confidence", 0))
 
-    # Default: sort by median comp price
-    median = item.get("comps", {}).get("median", "N/A")
-    return float(median.replace("$", "").replace(",", "")) if median != "N/A" else 0.0
+    # Default: sort by mean comp price
+    mean = item.get("comps", {}).get("mean", "N/A")
+    return float(mean.replace("$", "").replace(",", "")) if mean != "N/A" else 0.0

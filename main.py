@@ -269,7 +269,7 @@ def main() -> None:
             comp_counter += 1
             print(
                 f"[{comp_counter}/{total_unique}] {query}\n"
-                f"  -> {comps_res['low']} / {comps_res['median']} / "
+                f"  -> {comps_res['low']} / {comps_res['mean']} / "
                 f"{comps_res['high']} ({comps_res['count']} sales)"
             )
 
