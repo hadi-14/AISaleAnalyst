@@ -25,10 +25,10 @@
   - **Automated Search Query Generation**: Formulates optimized eBay search queries and fallback queries.
 - **Skipped Photos Audit**: Blurry, structural, or unidentified photos are flagged and preserved for manual review rather than silently dropped.
 
-### 🔍 3. Universal 2-Stage Deduplication
+### 🔍 3. Universal AI Deduplication
 Prevents over-counting assets across multi-angle photo sets while strictly preserving distinct individual inventory pieces:
-- **Stage 1: Strict Fuzzy Deduplication**: Uses `SequenceMatcher` similarity (threshold `0.88`) to merge near-identical AI labels without collapsing separate product types.
-- **Stage 2: Universal AI Deduplication**: Enforces a product-agnostic "Same Physical Object" rule. Multi-photo asset systems (e.g., a boat with its motor, trailer, and accessories) are collapsed into a single item, while individual items in shared categories (e.g., separate silver rings, necklaces, and pendants) remain distinct inventory records.
+- **Universal AI Deduplication**: Enforces a product-agnostic "Same Physical Object" rule. Multi-photo asset systems (e.g., a boat with its motor, trailer, and accessories) are collapsed into a single item, while individual items in shared categories (e.g., two distinct vintage wood chairs) remain distinct inventory records based on their visual condition notes.
+- **Zoomable Image Gallery**: When the AI groups multiple photos together, the final HTML report displays the primary photo alongside the alternate angles in a zoomable mini-gallery.
 
 ### ⚡ 4. Browserless, Super-Fast eBay Comps Scraper
 - **No Selenium / Chrome Windows**: Operates 100% via HTTP requests using `curl_cffi` (Chrome TLS fingerprint impersonation) + `BeautifulSoup`.
@@ -119,7 +119,6 @@ EBAY_DELAY=1.0
 # 🔍 DEDUPLICATION & VALUATION SETTINGS
 # ===============================================================================
 USE_DEDUP=true
-FUZZY_THRESHOLD=0.88
 USE_AI_DEDUP=true
 
 # ===============================================================================
@@ -200,9 +199,8 @@ The vision pipeline converts raw photos into structured JSON payloads like this:
 | `VISION_WORKERS` | `int` | `8` | Parallel worker threads for AI vision analysis. |
 | `EBAY_WORKERS` | `int` | `8` | Parallel worker threads for eBay comps scraping. |
 | `EBAY_DELAY` | `float` | `1.0` | Seconds delay between eBay HTTP requests. |
-| `USE_DEDUP` | `bool` | `true` | Enable/disable all deduplication (Stage 1 fuzzy and Stage 2 AI). |
-| `FUZZY_THRESHOLD` | `float` | `0.88` | Similarity threshold (0.0 to 1.0) for Stage 1 deduplication. |
-| `USE_AI_DEDUP` | `bool` | `true` | Enable/disable Stage 2 AI deduplication pass. |
+| `USE_DEDUP` | `bool` | `true` | Enable/disable AI deduplication pass. |
+| `USE_AI_DEDUP` | `bool` | `true` | Alias for USE_DEDUP (retained for backward compatibility). |
 | `USE_2CAPTCHA` | `bool` | `true` | Enable/disable auto 2captcha solving (set to `false` for manual solve). |
 | `OUTPUT_HTML` | `str` | `"./demo_report.html"` | File path for the output HTML report. |
 | `SORT_BY` | `str` | `"roi"` | Primary sorting key (`roi`, `profit`, `median`, `confidence`). |

@@ -82,8 +82,6 @@ SORT_BY: str = _env_str("SORT_BY", "roi")
 #: Maximum rows shown in the "Top Opportunities" section of the report.
 TOP_N: int = _env_int("TOP_N", 20)
 
-#: Minimum SequenceMatcher similarity (0–1) for fuzzy deduplication.
-FUZZY_THRESHOLD: float = _env_float("FUZZY_THRESHOLD", 0.88)
 
 #: When True, run a second AI-powered deduplication pass after fuzzy matching.
 USE_AI_DEDUP: bool = _env_bool("USE_AI_DEDUP", True)

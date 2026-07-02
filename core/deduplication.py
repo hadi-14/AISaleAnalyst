@@ -60,17 +60,9 @@ _AI_DEDUP_PROMPT = (
     "Ask yourself: 'Could I place all these photos in the same eBay listing for one item?' "
     "If yes, group them. If not, they are separate groups.\n"
     "- ACCESSORIES & ATTACHMENTS: Group any accessory, attachment, component, or installed "
-    "part WITH its single main parent asset. Examples:\n"
-    "  * Vehicles/Boats: Group the trailer, trolling/outboard motors, dashboard, seating, "
-    "car stereo, and anchors into the single boat/vehicle group.\n"
-    "  * Machinery/Tools: Group a machine with its stand, motor, power cords, blades, or attachments.\n"
-    "  * Electronics: Group a system with its speakers, receivers, monitors, keyboard, or remote.\n"
-    "- SINGLE VEHICLE ASSUMPTION: An estate sale normally has only ONE of each major vehicle "
-    "type. Assume all boat/vehicle photos (including its trailer, motors, console, seating, stereo) "
-    "are parts of that ONE vehicle — unless you see undeniable proof of two distinct vehicles "
-    "(e.g. two boats side-by-side in the same photo with clearly different hull colors/designs).\n"
-    "- COLLAPSE BRAND LABEL ERRORS: AI labels are preliminary guesses and are often wrong "
-    "or contradictory for the same object. Ignore conflicting brand names when deciding groups.\n"
+    "part WITH its single main parent asset.\n"
+    "- USE CONDITION NOTES: The condition notes often contain specific visual details. If two items have similar names but clearly different visual condition notes (e.g., one is in a box, one is rusty), they are DIFFERENT items. Do NOT group them.\n"
+    "- STRICTNESS IS REQUIRED: If you are not 100% certain two items are the exact same physical object based on their names and conditions, DO NOT group them! Over-grouping destroys data. It is perfectly fine if every item remains in its own group of 1.\n"
     "- Every index must appear in exactly one group.\n\n"
     "Return ONLY a JSON array of arrays, e.g.: [[0,1,2,5],[3,4],[6]]\n"
     "No explanation, no markdown."
@@ -124,8 +116,23 @@ def _get_item_descriptive_score(item: dict) -> float:
 
 
 def _best_in_group(items: list) -> dict:
-    """Return the most descriptive item from a deduplication group."""
-    return max(items, key=_get_item_descriptive_score)
+    """Return the most descriptive item from a deduplication group, attaching other photos."""
+    best = max(items, key=_get_item_descriptive_score)
+    
+    other_thumbs = []
+    for item in items:
+        if item is not best:
+            if "thumb" in item:
+                other_thumbs.append(item["thumb"])
+            # Also pull in any nested thumbs if this was previously grouped
+            if "other_thumbs" in item:
+                other_thumbs.extend(item["other_thumbs"])
+                
+    if "other_thumbs" not in best:
+        best["other_thumbs"] = []
+    best["other_thumbs"].extend(other_thumbs)
+    
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +222,8 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
             ai    = r["ai"]
             name  = ai.get("item_name", "Unknown")
             group = ai.get("item_group", "")
-            lines.append(f"{offset + local_i}: {name} [{group}]")
+            notes = ai.get("condition_notes", "")
+            lines.append(f"{offset + local_i}: {name} [{group}] | Cond: {notes}")
         return "\n".join(lines)
 
     def _call_ai(manifest: str) -> str:
@@ -322,7 +330,7 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
 
 def deduplicate(results: list) -> list:
     """
-    Run the full deduplication pipeline (fuzzy → optional AI pass).
+    Run the deduplication pipeline (AI pass only).
 
     Parameters
     ----------
@@ -334,10 +342,9 @@ def deduplicate(results: list) -> list:
     list
         Deduplicated item list ready for eBay scraping.
     """
-    label = "Fuzzy + AI" if USE_AI_DEDUP else "Fuzzy only"
-    print(f"\n-- Deduplication ({label}) --")
-
-    after_fuzzy = deduplicate_fuzzy(results)
-    if USE_AI_DEDUP and len(after_fuzzy) > 1:
-        return deduplicate_ai(after_fuzzy)
-    return after_fuzzy
+    if USE_AI_DEDUP and len(results) > 1:
+        print("\n-- Deduplication (AI only) --")
+        return deduplicate_ai(results)
+    
+    print("\n-- Deduplication bypassed (USE_AI_DEDUP=False) --")
+    return results
