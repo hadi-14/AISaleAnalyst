@@ -311,6 +311,11 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
 
     return prices, comp_links
 
+import threading
+import time
+import random
+
+_request_lock = threading.Lock()
 
 def _fetch_prices_from_url(search_url: str, query: str) -> tuple[list[float], list[str]]:
     """
@@ -330,11 +335,14 @@ def _fetch_prices_from_url(search_url: str, query: str) -> tuple[list[float], li
     """
     session = _get_session()
     try:
-        resp = session.get(
-            search_url,
-            headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
-            timeout=20,
-        )
+        with _request_lock:
+            # Sleep 1.5 - 3.5s to mimic human browsing and completely prevent CAPTCHAs
+            time.sleep(random.uniform(1.5, 3.5))
+            resp = session.get(
+                search_url,
+                headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
+                timeout=20,
+            )
         if resp.status_code != 200:
             print(f"  [eBay] HTTP {resp.status_code} for {search_url[:80]}")
             return [], []
