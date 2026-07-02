@@ -9,6 +9,7 @@ structured dict describing the item in the image.
 """
 
 import base64
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -44,6 +45,7 @@ Use every identifier and spec you can read or estimate to build the most specifi
 Return ONLY a valid JSON object with these exact fields:
 {
   "skip": false,
+  "skip_reason": "If skip is true, explain why (e.g., blurry, structural, no item), otherwise empty string",
   "exact_model_identified": true,
   "multi_item_detected": false,
   "item_name": "Brand Model# Year/Spec — e.g. Princecraft Super Pro 176 Boat 1998 or Troy-Bilt Tomahawk 5HP Chipper",
@@ -147,10 +149,8 @@ def analyze_image(image_path: str) -> dict:
     """
     import time
     
-    retries = 3
-    retry_delay = 10  # starting delay on rate limit
-    
-    for attempt in range(retries):
+    attempt = 1
+    while True:
         try:
             if AI_PROVIDER == "openai":
                 with open(image_path, "rb") as f:
@@ -190,14 +190,12 @@ def analyze_image(image_path: str) -> dict:
 
         except Exception as exc:
             exc_str = str(exc).lower()
-            # If 429 Rate Limit error occurs, perform exponential backoff retry
-            if ("429" in exc_str or "rate" in exc_str or "request" in exc_str) and attempt < retries - 1:
-                print(f"  [Rate Limit] 429 received on {Path(image_path).name} - Retrying in {retry_delay}s (Attempt {attempt+1}/{retries})...")
-                time.sleep(retry_delay)
-                retry_delay *= 2
+            # If rate limit occurs, wait 30s and try again until it succeeds
+            if "429" in exc_str or "rate" in exc_str or "request" in exc_str or "tpm" in exc_str or "limit" in exc_str:
+                print(f"  [Rate Limit] {Path(image_path).name} hit limit - Thread waiting 30s before retry (Attempt {attempt})...")
+                time.sleep(30)
+                attempt += 1
                 continue
             
             print(f"  AI error on {image_path}: {exc}")
-            return {"skip": True}
-            
-    return {"skip": True}
+            return {"skip": True, "skip_reason": f"AI error: {exc}"}

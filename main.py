@@ -180,7 +180,8 @@ def main() -> None:
             with results_lock:
                 counter += 1
                 if ai_result.get("skip"):
-                    print(f"[{counter}/{total_images}] {img_path.name} -> Skipped")
+                    skip_reason = ai_result.get("skip_reason", "Unknown reason")
+                    print(f"[{counter}/{total_images}] {img_path.name} -> Skipped ({skip_reason})")
                     skipped_results.append({
                         "image": str(img_path),
                         "ai":    ai_result,
@@ -212,16 +213,32 @@ def main() -> None:
                 except Exception as e:
                     print(f"  [Warning] Failed to write progress file: {e}")
 
-        with ThreadPoolExecutor(max_workers=VISION_WORKERS) as executor:
-            futures = [
-                executor.submit(process_image, img_path, idx)
-                for idx, img_path in enumerate(images_to_analyze)
-            ]
-            for future in as_completed(futures):
+        import queue
+        task_queue = queue.Queue()
+        for idx, img_path in enumerate(images_to_analyze):
+            task_queue.put((idx, img_path))
+            
+        def worker():
+            while True:
                 try:
-                    future.result()
+                    idx, img_path = task_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    process_image(img_path, idx)
                 except Exception as exc:
                     print(f"  Thread exception: {exc}")
+                finally:
+                    task_queue.task_done()
+                    
+        threads = []
+        for _ in range(VISION_WORKERS):
+            t = threading.Thread(target=worker)
+            t.start()
+            threads.append(t)
+            
+        for t in threads:
+            t.join()
     else:
         print("All images loaded from cache. No new analysis needed.")
 
