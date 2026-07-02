@@ -261,21 +261,19 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
     prices:     list[float] = []
     comp_links: list[str]   = []
 
-    # If eBay explicitly states 0 results (but shows "results matching fewer words"), abort
-    heading = soup.select_one("h1.srp-controls__count-heading")
-    if not heading:
-        # Not a valid search results page (likely bot challenge or error page)
-        return [], []
-        
-    heading_text = heading.get_text(strip=True).lower()
-    if heading_text.startswith("0 result") or "no exact matches" in heading_text:
-        return [], []
+    # If eBay explicitly states 0 results (but shows "results matching fewer words"), abort early if we can detect it.
+    heading = soup.select_one("h1.srp-controls__count-heading, h1.rs-controls__count-heading, h1.s-title-count")
+    if heading:
+        heading_text = heading.get_text(strip=True).lower()
+        if heading_text.startswith("0 result") or "no exact matches" in heading_text:
+            return [], []
 
-    cards = soup.select("div.su-card-container__attributes")
+    # Select the main listing cards (supports both traditional and new SSR layouts)
+    cards = soup.select("li.s-item, div.s-item, div.su-card-container")
 
     for card in cards:
         # Title: used for post-filtering parts/accessories
-        title_el = card.select_one("a.s-card__link, [class*='s-card__link']")
+        title_el = card.select_one("a.s-card__link, [class*='s-card__link'], h3.s-item__title, .s-item__title")
         title = title_el.get_text(strip=True) if title_el else ""
         if title and should_filter_by_title(title, query):
             continue
@@ -303,7 +301,7 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
                             comp_links.append(href)
 
     if not prices:
-        for el in soup.select("span.s-card__price:not(.strikethrough), [class*='s-card__price']"):
+        for el in soup.select("span.s-card__price:not(.strikethrough), [class*='s-card__price'], .s-item__price span.ITALIC, .s-item__price"):
             txt = el.get_text(strip=True)
             m = re.search(r"([\d,]+\.?\d*)", txt.replace(",", ""))
             if m:
