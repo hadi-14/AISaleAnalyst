@@ -343,10 +343,26 @@ def _fetch_prices_from_url(search_url: str, query: str) -> tuple[list[float], li
                 headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
                 timeout=20,
             )
+        
+        text_lower = resp.text.lower()
+        if "captcha" in text_lower or "security measure" in text_lower:
+            print(f"  [eBay] 🚨 CAPTCHA BLOCK DETECTED for {search_url[:80]}...")
+            with open("ebay_debug_captcha.html", "w", encoding="utf-8") as f:
+                f.write(resp.text)
+            return [], []
+            
         if resp.status_code != 200:
             print(f"  [eBay] HTTP {resp.status_code} for {search_url[:80]}")
             return [], []
-        return _parse_prices_from_html(resp.text, query)
+            
+        prices, links = _parse_prices_from_html(resp.text, query)
+        
+        # Save HTML if 0 results, to help diagnose if it's a DOM change or block
+        if not prices:
+            with open("ebay_debug_0_results.html", "w", encoding="utf-8") as f:
+                f.write(resp.text)
+                
+        return prices, links
     except Exception as exc:
         print(f"  [eBay] Request error: {exc}")
         return [], []
