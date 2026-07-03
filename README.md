@@ -155,7 +155,7 @@ python main.py
 2. **Vision Analysis**: Images are processed concurrently (`VISION_WORKERS`). Progress is printed in real time.
 3. **Deduplication**: Multi-angle photos of identical items are grouped automatically.
 4. **Comps Scraping**: Market data is fetched from eBay across parallel HTTP workers (`EBAY_WORKERS`).
-5. **Report Generation**: The final dashboard is generated and saved to `OUTPUT_HTML`.
+5. **Report Generation**: The final dashboard is generated and saved using `OUTPUT_HTML` as the base filename, dynamically appending the sale ID and timestamp.
 
 ---
 
@@ -202,7 +202,7 @@ The vision pipeline converts raw photos into structured JSON payloads like this:
 | `USE_DEDUP` | `bool` | `true` | Enable/disable AI deduplication pass. |
 | `USE_AI_DEDUP` | `bool` | `true` | Alias for USE_DEDUP (retained for backward compatibility). |
 | `USE_2CAPTCHA` | `bool` | `true` | Enable/disable auto 2captcha solving (set to `false` for manual solve). |
-| `OUTPUT_HTML` | `str` | `"./demo_report.html"` | File path for the output HTML report. |
+| `OUTPUT_HTML` | `str` | `"./demo_report.html"` | Base file path for the output HTML report. The script appends the sale ID and timestamp dynamically. |
 | `SORT_BY` | `str` | `"roi"` | Primary sorting key (`roi`, `profit`, `median`, `confidence`). |
 | `TOP_N` | `int` | `20` | Maximum top opportunities shown in summary section. |
 | `SHIPPO_API_KEY` | `str` | `""` | Live API key from goshippo.com to fetch real-time carrier rates. |
