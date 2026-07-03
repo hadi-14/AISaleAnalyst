@@ -79,6 +79,10 @@ def calc_financials(item: dict) -> dict:
         lo         = float(ai.get("ai_value_low",  0) or 0)
         hi         = float(ai.get("ai_value_high", 0) or 0)
         sell_price = (lo + hi) / 2
+        
+        # Discount naive AI estimate by 50% if 0 comps found to remain conservative
+        if comps.get("count", 0) == 0:
+            sell_price *= 0.50
 
     # Calculate eBay fees
     ebay_fee = estimate_ebay_fee(sell_price, cat_id)
@@ -138,6 +142,12 @@ def calc_financials(item: dict) -> dict:
         adj_conf -= 25
 
     adjusted_confidence = max(10, min(99, adj_conf))
+
+    # Apply penalty to ROI for low confidence, or zero it out completely if no comps
+    if count == 0:
+        roi = 0.0
+    elif adjusted_confidence < 70:
+        roi = roi * (adjusted_confidence / 100.0)
 
     return {
         "sell_price":          sell_price,

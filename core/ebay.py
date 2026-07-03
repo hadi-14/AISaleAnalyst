@@ -430,8 +430,8 @@ def get_condition_param(condition: str | None) -> str:
 # Main public scraping function
 # ---------------------------------------------------------------------------
 
-#: eBay sold/completed filter suffix appended to every search URL.
-_EBAY_SUFFIX = "&LH_Complete=1&LH_Sold=1&_sop=13"
+#: eBay sold/completed filter suffix appended to every search URL. (LH_PrefLoc=1 restricts to US only)
+_EBAY_SUFFIX = "&LH_Complete=1&LH_Sold=1&_sop=13&LH_PrefLoc=1"
 
 
 def scrape_ebay_comps(
@@ -485,6 +485,7 @@ def scrape_ebay_comps(
         min_price       = int(ai_val_low * 0.20) if ai_val_low and ai_val_low > 0 else 0
         neg_keywords    = get_ai_negative_keywords(item_name or cleaned_query, cleaned_query)
         exclusion_str   = "".join(f"+-{kw}" for kw in neg_keywords)
+        full_query_disp = f"{cleaned_query} {' '.join('-' + kw for kw in neg_keywords)}".strip()
         base_nkw        = cleaned_query.replace(" ", "+")
         floor_param     = f"&_udlo={min_price}" if min_price > 0 else ""
         category_param  = f"&_sacat={category_id}" if category_id and int(category_id) > 0 else ""
@@ -543,7 +544,7 @@ def scrape_ebay_comps(
             return {
                 "low": "N/A", "mean": "N/A", "high": "N/A",
                 "count": 0, "link": used_url, "links": [],
-                "fallback_used": False, "query_used": cleaned_query,
+                "fallback_used": False, "query_used": full_query_disp,
             }
 
         low_val, mean_val, high_val = process_ebay_prices(prices)
@@ -556,7 +557,7 @@ def scrape_ebay_comps(
             "link":         used_url,
             "links":        comp_links,
             "fallback_used": False,
-            "query_used":   cleaned_query,
+            "query_used":   full_query_disp,
         }
 
     except Exception as exc:
