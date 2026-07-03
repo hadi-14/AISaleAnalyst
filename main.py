@@ -79,6 +79,7 @@ def main() -> None:
 
     # --- Resolve images folder
     images_folder = IMAGES_FOLDER
+    url = None
     if images_folder is None:
         url           = input("Enter Estate listing URL: ").strip()
         
@@ -116,6 +117,13 @@ def main() -> None:
                 last_url_file.write_text(url, encoding="utf-8")
             except Exception as e:
                 print(f"Warning: Could not save last URL metadata: {e}")
+    else:
+        last_url_file = Path(images_folder) / "last_url.txt"
+        if last_url_file.exists():
+            try:
+                url = last_url_file.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
 
     folder      = Path(images_folder)
     extensions  = {".jpg", ".jpeg", ".png", ".webp"}
@@ -299,7 +307,29 @@ def main() -> None:
                 print(f"  eBay worker exception: {exc}")
 
     # --- Step 4: Generate report
-    generate_report(unique_results, OUTPUT_HTML, skipped_items=skipped_results)
+    import urllib.parse
+    from datetime import datetime
+
+    sale_id = "Unknown"
+    if url:
+        try:
+            path = urllib.parse.urlparse(url.strip()).path
+            segments = [s for s in path.split("/") if s.isdigit()]
+            if segments:
+                sale_id = segments[-1]
+        except Exception:
+            pass
+
+    current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
+    
+    if OUTPUT_HTML in ("./demo_report.html", "demo_report.html"):
+        final_output_path = f"EstateReport_{sale_id}_{current_time}.html"
+    else:
+        out_p = Path(OUTPUT_HTML)
+        final_output_path = str(out_p.parent / f"{out_p.stem}_{sale_id}_{current_time}{out_p.suffix}")
+
+    generate_report(unique_results, final_output_path, skipped_items=skipped_results)
+    print(f"\nReport successfully saved to {final_output_path}")
 
 
 if __name__ == "__main__":

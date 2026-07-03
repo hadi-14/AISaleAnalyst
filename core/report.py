@@ -58,11 +58,17 @@ def build_row(rank: int, item: dict) -> str:
     bar_width = int(conf * 0.6)           # max bar ≈ 60 px at 100 %
     t_cls, _  = tier(roi)
     comp_link = comps.get("link", "#")
-    thumb     = item.get("thumb", "")
-    img_tag   = (
-        f'<img src="{thumb}" style="width:80px;height:70px;object-fit:cover;border-radius:4px;">'
-        if thumb else "—"
-    )
+    thumb = item.get("thumb", "")
+    other_thumbs = item.get("other_thumbs", [])
+    
+    if thumb:
+        thumbs_html = f'<div class="img-wrapper main"><img src="{thumb}"></div>'
+        for ot in other_thumbs[:4]: # Cap at 4 additional thumbs to keep UI clean
+            thumbs_html += f'<div class="img-wrapper sec"><img src="{ot}"></div>'
+        
+        img_tag = f'<div class="thumb-gallery">{thumbs_html}</div>'
+    else:
+        img_tag = "—"
 
     # Condition badge
     cond_text = ai.get("ebay_condition") or "Used"
@@ -93,10 +99,6 @@ def build_row(rank: int, item: dict) -> str:
 
     # Comps verification links
     link_buttons = []
-    verified_links = comps.get("links", [])
-    if verified_links:
-        for idx, url in enumerate(verified_links[:3], 1):
-            link_buttons.append(f'<a href="{url}" target="_blank" style="display:inline-block;margin:3px;font-size:11px;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;padding:4px 8px;border-radius:4px;background:#f0f9ff;font-weight:500;">Comp #{idx}</a>')
     
     if comp_link and comp_link != "#":
         link_buttons.append(f'<a href="{comp_link}" target="_blank" style="display:inline-block;margin:3px;font-size:11px;color:#ffffff;text-decoration:none;background:#2563eb;padding:4px 8px;border-radius:4px;font-weight:bold;">All Comps</a>')
@@ -136,6 +138,12 @@ def build_row(rank: int, item: dict) -> str:
         days_str = f" ({shipping_est_days}d)" if shipping_est_days else ""
         shipping_desc = f'<div style="font-size:10px;color:#6b7280;text-align:left;margin-top:2px;">{shipping_carrier} {shipping_service}{days_str}</div>'
 
+    ai_low = ai.get('ai_value_low')
+    ai_high = ai.get('ai_value_high')
+    ai_val_html = ""
+    if ai_low is not None and ai_high is not None:
+        ai_val_html = f'<div style="font-size:11px;color:#4b5563;margin-top:6px;padding-top:4px;border-top:1px dashed #e5e7eb;" title="Raw estimate from the vision AI">AI Est: <span style="font-weight:bold;">${ai_low} – ${ai_high}</span></div>'
+
     return f"""
     <tr>
       <td class="rank">{rank}</td>
@@ -150,8 +158,9 @@ def build_row(rank: int, item: dict) -> str:
       </td>
       <td class="center">
         <div style="font-weight:bold;font-size:14px;">${sell_price:.0f}</div>
-        <div style="font-size:11px;color:#888;margin-top:2px;">{comps['low']} – {comps['high']}</div>
-        <div style="font-size:10px;color:#999;margin-top:4px;">{count_text}</div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">eBay: {comps['low']} – {comps['high']}</div>
+        <div style="font-size:10px;color:#999;margin-top:2px;">{count_text}</div>
+        {ai_val_html}
       </td>
       <td class="center">
         <div style="font-size:12px;color:#555;text-align:left;">eBay Fee: <span style="font-weight:bold;float:right;">-${ebay_fee:.2f}</span></div>
@@ -193,7 +202,7 @@ def build_skipped_row(rank: int, item: dict) -> str:
     thumb       = item.get("thumb", "")
     
     img_tag = (
-        f'<img src="{thumb}" style="width:80px;height:70px;object-fit:cover;border-radius:4px;">'
+        f'<div class="thumb-gallery"><div class="img-wrapper main"><img src="{thumb}"></div></div>'
         if thumb else "—"
     )
     
@@ -256,6 +265,12 @@ body { font-family: Arial, sans-serif; font-size: 13px; background: #f9fafb; col
 .section-title.gold { border-top-color: #a07000; color: #a07000; background: #fefcf8; }
 .section-title.skipped { border-top-color: #b91c1c; color: #b91c1c; background: #fef2f2; }
 .sort-note { padding: 12px 32px; font-size: 12px; color: #6b7280; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.thumb-gallery { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; align-items: center; max-width: 90px; margin: 0 auto; }
+.img-wrapper { border-radius: 4px; position: relative; }
+.img-wrapper img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: zoom-in; transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94); z-index: 1; position: relative; }
+.img-wrapper.main { width: 80px; height: 70px; }
+.img-wrapper.sec { width: 38px; height: 38px; }
+.img-wrapper img:hover { transform: scale(4.5); z-index: 1000; box-shadow: 0 15px 35px rgba(0,0,0,0.3); border-radius: 2px; }
 table { width: 100%; border-collapse: collapse; background: #fff; }
 thead th { background: #1f2937; color: #f9fafb; padding: 14px 16px; text-align: left;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: bold; }

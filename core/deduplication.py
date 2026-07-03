@@ -20,7 +20,6 @@ from difflib import SequenceMatcher
 
 from .config import (
     AI_PROVIDER,
-    FUZZY_THRESHOLD,
     USE_AI_DEDUP,
     fix_and_parse_json,
 )
@@ -135,49 +134,6 @@ def _best_in_group(items: list) -> dict:
     return best
 
 
-# ---------------------------------------------------------------------------
-# Stage 1: Fuzzy deduplication
-# ---------------------------------------------------------------------------
-
-
-def deduplicate_fuzzy(results: list) -> list:
-    """
-    Group items whose ``item_name`` labels exceed the fuzzy-match threshold
-    and keep only the most descriptive representative per group.
-
-    Parameters
-    ----------
-    results:
-        List of item dicts produced by the AI vision pass.  Each dict must
-        contain an ``"ai"`` key with at least ``item_name`` and
-        ``item_group`` sub-keys.
-
-    Returns
-    -------
-    list
-        Deduplicated list (one representative per group).
-    """
-    groups: dict[str, list] = {}  # normalised_key → [items]
-
-    for item in results:
-        ai        = item["ai"]
-        raw_label = ai.get("item_name") or ai.get("item_group") or "unknown"
-        norm      = _normalize(raw_label)
-
-        matched_key = None
-        for existing_key in groups:
-            if _similarity(norm, existing_key) >= FUZZY_THRESHOLD:
-                matched_key = existing_key
-                break
-
-        if matched_key is None:
-            groups[norm] = [item]
-        else:
-            groups[matched_key].append(item)
-
-    deduped = [_best_in_group(group) for group in groups.values()]
-    print(f"  [Fuzzy dedup] {len(results)} images -> {len(deduped)} unique items")
-    return deduped
 
 
 # ---------------------------------------------------------------------------
