@@ -106,7 +106,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 # ===============================================================================
 MAX_IMAGES=10
 IMAGES_FOLDER=
-OUTPUT_HTML=./demo_report.html
+OUTPUT_FOLDER=./reports
 
 # ===============================================================================
 # ⚡ CONCURRENCY & WORKER THREADS
@@ -155,7 +155,7 @@ python main.py
 2. **Vision Analysis**: Images are processed concurrently (`VISION_WORKERS`). Progress is printed in real time.
 3. **Deduplication**: Multi-angle photos of identical items are grouped automatically.
 4. **Comps Scraping**: Market data is fetched from eBay across parallel HTTP workers (`EBAY_WORKERS`).
-5. **Report Generation**: The final dashboard is generated and saved using `OUTPUT_HTML` as the base filename, dynamically appending the sale ID and timestamp.
+5. **Report Generation**: The final dashboard is generated and saved using `OUTPUT_FOLDER` as the base filename, dynamically appending the sale ID and timestamp.
 
 ---
 
@@ -174,6 +174,7 @@ The vision pipeline converts raw photos into structured JSON payloads like this:
   "ebay_condition": "Used",
   "ebay_search_query": "DeWalt DWS779 Miter Saw",
   "ebay_fallback_query": "DeWalt Miter Saw",
+  "ebay_exclusion_keywords": ["blade", "manual", "box", "bag", "stand"],
   "platform": "eBay",
   "ebay_category_id": 3312,
   "ai_value_low": 250,
@@ -202,7 +203,7 @@ The vision pipeline converts raw photos into structured JSON payloads like this:
 | `USE_DEDUP` | `bool` | `true` | Enable/disable AI deduplication pass. |
 | `USE_AI_DEDUP` | `bool` | `true` | Alias for USE_DEDUP (retained for backward compatibility). |
 | `USE_2CAPTCHA` | `bool` | `true` | Enable/disable auto 2captcha solving (set to `false` for manual solve). |
-| `OUTPUT_HTML` | `str` | `"./demo_report.html"` | Base file path for the output HTML report. The script appends the sale ID and timestamp dynamically. |
+| `OUTPUT_FOLDER` | `str` | `"./reports"` | Directory to save the dynamically generated HTML reports. |
 | `SORT_BY` | `str` | `"roi"` | Primary sorting key (`roi`, `profit`, `median`, `confidence`). |
 | `TOP_N` | `int` | `20` | Maximum top opportunities shown in summary section. |
 | `SHIPPO_API_KEY` | `str` | `""` | Live API key from goshippo.com to fetch real-time carrier rates. |

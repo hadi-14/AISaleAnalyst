@@ -50,7 +50,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_HTML, image_to_base64, USE_DEDUP
+from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP
 from core.deduplication import deduplicate
 from core.ebay import scrape_ebay_comps
 from core.report import generate_report
@@ -278,6 +278,7 @@ def main() -> None:
         category_id    = item["ai"].get("ebay_category_id")
         fallback_query = item["ai"].get("ebay_fallback_query")
         ebay_condition = item["ai"].get("ebay_condition")
+        exclusion_keywords = item["ai"].get("ebay_exclusion_keywords", [])
 
         comps_res = scrape_ebay_comps(
             None,
@@ -287,6 +288,7 @@ def main() -> None:
             category_id,
             fallback_query=fallback_query,
             ebay_condition=ebay_condition,
+            exclusion_keywords=exclusion_keywords,
         )
         item["comps"] = comps_res
 
@@ -322,11 +324,11 @@ def main() -> None:
 
     current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
     
-    if OUTPUT_HTML in ("./demo_report.html", "demo_report.html"):
-        final_output_path = f"EstateReport_{sale_id}_{current_time}.html"
-    else:
-        out_p = Path(OUTPUT_HTML)
-        final_output_path = str(out_p.parent / f"{out_p.stem}_{sale_id}_{current_time}{out_p.suffix}")
+    # Ensure output folder exists
+    out_dir = Path(OUTPUT_FOLDER)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    final_output_path = str(out_dir / f"EstateReport_{sale_id}_{current_time}.html")
 
     generate_report(unique_results, final_output_path, skipped_items=skipped_results)
     print(f"\nReport successfully saved to {final_output_path}")

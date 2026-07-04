@@ -155,84 +155,6 @@ def should_filter_by_title(title: str, query: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# AI-generated negative keywords (cached per session)
-# ---------------------------------------------------------------------------
-
-#: Session-level cache: query string -> list of exclusion keywords.
-_neg_kw_cache: dict[str, list[str]] = {}
-
-
-def get_ai_negative_keywords(item_name: str, query: str) -> list[str]:
-    """
-    Ask the AI for 8-12 item-specific keywords to exclude from the eBay
-    search (``-keyword`` syntax).  Results are cached per *query* so
-    repeated calls for the same item are free.
-
-    Parameters
-    ----------
-    item_name:
-        Human-readable item name (used in the prompt for context).
-    query:
-        The eBay search query string (used as the cache key).
-
-    Returns
-    -------
-    list[str]
-        Lowercase single-word exclusion terms, e.g.
-        ``["carburetor", "blade", "manual", "gasket"]``.
-        Returns an empty list on any error.
-    """
-    cache_key = query.lower().strip()
-    if cache_key in _neg_kw_cache:
-        return _neg_kw_cache[cache_key]
-
-    prompt = (
-        f'I am searching eBay sold listings for: "{item_name}"\n'
-        "Generate 8-12 specific single-word keywords for PARTS, ACCESSORIES, "
-        "or COMPONENTS of this item that would appear in unrelated cheap listings "
-        "and should be EXCLUDED from search results.\n"
-        "Rules:\n"
-        '- Return ONLY a JSON array of lowercase single words, e.g. ["carburetor", "blade", "manual"]\n'
-        "- Do NOT include words that are part of the item's name itself\n"
-        "- Focus on small cheap parts/accessories/consumables/manuals that often appear "
-        "when searching for the full item\n"
-        "- No explanation, no markdown, just the JSON array"
-    )
-
-    try:
-        if AI_PROVIDER == "openai":
-            response = openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=120,
-            )
-            text = response.choices[0].message.content.strip()
-        else:  # gemini
-            response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[prompt],
-            )
-            text = response.text.strip()
-
-        keywords = fix_and_parse_json(text)
-        if isinstance(keywords, list):
-            keywords = [
-                k.strip().lower()
-                for k in keywords
-                if isinstance(k, str) and " " not in k.strip()
-            ][:5]
-            _neg_kw_cache[cache_key] = keywords
-            print(f"  [eBay exclusions] {keywords}")
-            return keywords
-
-    except Exception as exc:
-        print(f"  [eBay exclusions] AI error ({exc}) -- skipping")
-
-    _neg_kw_cache[cache_key] = []
-    return []
-
-
-# ---------------------------------------------------------------------------
 # HTML scraping helpers (BeautifulSoup)
 # ---------------------------------------------------------------------------
 
@@ -430,7 +352,7 @@ def get_condition_param(condition: str | None) -> str:
 # Main public scraping function
 # ---------------------------------------------------------------------------
 
-#: eBay sold/completed filter suffix appended to every search URL. (LH_PrefLoc=1 restricts to US only)
+#: eBay sold/completed filter suffix appended to every search URL.
 _EBAY_SUFFIX = "&LH_Complete=1&LH_Sold=1&_sop=13&LH_PrefLoc=1"
 
 
@@ -442,6 +364,7 @@ def scrape_ebay_comps(
     category_id: int | None = None,
     fallback_query: str | None = None,
     ebay_condition: str | None = None,
+    exclusion_keywords: list[str] | None = None,
 ) -> dict:
     """
     Scrape eBay sold listings for *query* and return a comps summary.
@@ -483,9 +406,8 @@ def scrape_ebay_comps(
         cleaned_query = re.sub(r"\s+", " ", cleaned_query)
 
         min_price       = int(ai_val_low * 0.20) if ai_val_low and ai_val_low > 0 else 0
-        neg_keywords    = get_ai_negative_keywords(item_name or cleaned_query, cleaned_query)
+        neg_keywords    = exclusion_keywords or []
         exclusion_str   = "".join(f"+-{kw}" for kw in neg_keywords)
-        full_query_disp = f"{cleaned_query} {' '.join('-' + kw for kw in neg_keywords)}".strip()
         base_nkw        = cleaned_query.replace(" ", "+")
         floor_param     = f"&_udlo={min_price}" if min_price > 0 else ""
         category_param  = f"&_sacat={category_id}" if category_id and int(category_id) > 0 else ""
@@ -527,6 +449,11 @@ def scrape_ebay_comps(
         comp_links = best_links
         used_url = best_url
 
+        # Extract exact query string used from the URL
+        import urllib.parse
+        parsed = urllib.parse.urlparse(used_url)
+        exact_query = urllib.parse.parse_qs(parsed.query).get('_nkw', [cleaned_query])[0]
+
         if not prices:
             if fallback_query:
                 print(f"  [0 results -> trying fallback query: '{fallback_query}']")
@@ -538,13 +465,14 @@ def scrape_ebay_comps(
                     category_id=category_id,
                     fallback_query=None,
                     ebay_condition=ebay_condition,
+                    exclusion_keywords=exclusion_keywords,
                 )
                 res["fallback_used"] = True
                 return res
             return {
                 "low": "N/A", "mean": "N/A", "high": "N/A",
                 "count": 0, "link": used_url, "links": [],
-                "fallback_used": False, "query_used": full_query_disp,
+                "fallback_used": False, "query_used": exact_query,
             }
 
         low_val, mean_val, high_val = process_ebay_prices(prices)
@@ -557,7 +485,7 @@ def scrape_ebay_comps(
             "link":         used_url,
             "links":        comp_links,
             "fallback_used": False,
-            "query_used":   full_query_disp,
+            "query_used":   exact_query,
         }
 
     except Exception as exc:

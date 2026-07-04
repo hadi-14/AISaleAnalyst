@@ -54,6 +54,7 @@ Return ONLY a valid JSON object with these exact fields:
   "ebay_condition": "Used — one of: New, Open Box, Used, For parts",
   "ebay_search_query": "Brand Model# — e.g. Princecraft Super Pro 176 or Troy-Bilt Tomahawk (do NOT combine multiple distinct assets like boat and outboard HP, e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176', not 'Princecraft 176 Boat with 115 Outboard Motor')",
   "ebay_fallback_query": "Brand Noun — e.g. Princecraft Boat or Troy-Bilt Chipper (broader query containing ONLY brand and category/noun, used if the specific query returns no results)",
+  "ebay_exclusion_keywords": ["manual", "box", "case", "parts", "battery"],
   "platform": "eBay",
   "ebay_category_id": 26429,
   "ai_value_low": 250,
@@ -77,6 +78,7 @@ Rules:
 - ebay_condition MUST be one of: New, Open Box, Used, For parts. Evaluate from visual wear, packaging, etc.
 - ebay_search_query MUST include brand + model number/name + spec if readable — \
   never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176').
+- ebay_exclusion_keywords MUST be an array of up to 5 single-word lowercase keywords representing parts, accessories, manuals, or boxes that would appear in cheap, unrelated listings and should be EXCLUDED from search results (e.g., ["manual", "carburetor", "blade", "gasket", "box"]). Do NOT include words that are part of the item's actual name.
 - ebay_category_id is the numeric eBay Category ID (sacat) for the item. Refer to these common category IDs:
   * Antiques: 20081 | Art: 550 | Books: 267 | Clothing: 11450 | Coins & Paper Money: 11116
   * Collectibles: 1 | Electronics: 293 | Furniture: 20091 | Home & Garden: 11700 | Jewelry: 281
@@ -90,6 +92,12 @@ Rules:
 Identifying Standalone/Detachable Equipment:
 - If the image focuses on a distinct, detachable, or valuable piece of equipment/accessory (such as a trolling motor, outboard motor, trailer, standalone tool attachment, or generator), identify the item as that specific accessory (e.g., "Minn Kota PowerDrive V2 Trolling Motor"), NOT the larger vehicle/boat it is attached to.
 - Only identify the item as the whole vehicle (e.g., "boat" or "car") if the photo shows the entire vehicle or a general view of it.
+
+Identifying Generic vs Specific Items (CRITICAL):
+- Generic Items: If the item is a generic household good (e.g., plain wood nightstand, photo album, folding TV tray, unbranded glass jar, generic decor) and you CANNOT identify a specific manufacturer, vintage designer, or unique collectible feature, you MUST either:
+  1. Set "skip": true if the item has negligible resale value (e.g. under $10).
+  2. Set "confidence" very low (e.g., 20-40) and set "exact_model_identified": false.
+- Do NOT use generic nouns for the search query (e.g., never search "Wooden Nightstand" or "Folding TV Tray Table"). Generic searches will match expensive, unrelated designer pieces on eBay and artificially inflate valuations. The search query MUST contain distinguishing features (material, brand, vintage era, unique style) if you decide not to skip it.
 
 item_group rules — READ CAREFULLY:
   • Use the SHORTEST possible noun(s) that name the MAIN physical object in the frame

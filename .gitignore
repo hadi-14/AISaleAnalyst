@@ -53,3 +53,5 @@ ebay_debug*.html
 .idea/
 .DS_Store
 Thumbs.db
+
+reports/

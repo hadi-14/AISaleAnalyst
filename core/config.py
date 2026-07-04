@@ -61,8 +61,8 @@ def _env_bool(key: str, default: bool) -> bool:
 #: Set to None to prompt the user at runtime.
 IMAGES_FOLDER: str | None = _env_str("IMAGES_FOLDER", None)
 
-#: Path where the HTML report is written.
-OUTPUT_HTML: str = _env_str("OUTPUT_HTML", "./demo_report.html")
+#: Path to the folder where the HTML reports are saved.
+OUTPUT_FOLDER: str = _env_str("OUTPUT_FOLDER", "./")
 
 #: Maximum number of images to analyse per run.
 MAX_IMAGES: int = _env_int("MAX_IMAGES", 10)

@@ -78,11 +78,8 @@ def calc_financials(item: dict) -> dict:
     else:
         lo         = float(ai.get("ai_value_low",  0) or 0)
         hi         = float(ai.get("ai_value_high", 0) or 0)
-        sell_price = (lo + hi) / 2
-        
-        # Discount naive AI estimate by 50% if 0 comps found to remain conservative
-        if comps.get("count", 0) == 0:
-            sell_price *= 0.50
+        # Discount the AI's naked estimate by 50% if there are 0 reliable sold comps
+        sell_price = ((lo + hi) / 2) * 0.5
 
     # Calculate eBay fees
     ebay_fee = estimate_ebay_fee(sell_price, cat_id)
@@ -117,12 +114,6 @@ def calc_financials(item: dict) -> dict:
     if buy_price == 0:
         buy_price = sell_price * 0.20
 
-    # Expected net profit
-    profit = net_after_fees - buy_price
-    
-    # ROI based on actual buy price
-    roi = (profit / buy_price * 100) if buy_price > 0 else 0.0
-
     # Calculate adjusted confidence based on listing match counts
     initial_conf = int(ai.get("confidence", 0))
     count = comps.get("count", 0)
@@ -143,11 +134,24 @@ def calc_financials(item: dict) -> dict:
 
     adjusted_confidence = max(10, min(99, adj_conf))
 
-    # Apply penalty to ROI for low confidence, or zero it out completely if no comps
+    # Expected net profit
+    profit = net_after_fees - buy_price
+    
+    # ROI based on actual buy price
+    raw_roi = (profit / buy_price * 100) if buy_price > 0 else 0.0
+    
+    # Composite Ranking / Penalties
     if count == 0:
+        # Zero comps penalty: hard 0 ROI so it never ranks top
         roi = 0.0
-    elif adjusted_confidence < 70:
-        roi = roi * (adjusted_confidence / 100.0)
+    elif adjusted_confidence < 75:
+        # Confidence penalty: aggressively penalize ROI if confidence is low
+        multiplier = (adjusted_confidence / 100.0) ** 2
+        roi = raw_roi * multiplier
+    else:
+        roi = raw_roi
+        
+    roi = max(0.0, roi)
 
     return {
         "sell_price":          sell_price,
