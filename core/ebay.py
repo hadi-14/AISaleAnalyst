@@ -430,6 +430,7 @@ def scrape_ebay_comps(
     dict
         Keys: ``low``, ``median``, ``high``, ``count``, ``link``, ``links``, ``fallback_used``.
     """
+    global _consecutive_failures, _session
     try:
         import urllib.parse
         cleaned_query = re.sub(r"\b(sold|completed|complete)\b", "", query, flags=re.IGNORECASE).strip()
@@ -502,7 +503,6 @@ def scrape_ebay_comps(
                 return res
 
             # All fallbacks exhausted with 0 results — check for soft block
-            global _consecutive_failures, _session
             with _failures_lock:
                 _consecutive_failures += 1
                 fails = _consecutive_failures
@@ -524,7 +524,6 @@ def scrape_ebay_comps(
             }
 
         # Successful result — reset consecutive failure counter
-        global _consecutive_failures
         with _failures_lock:
             _consecutive_failures = 0
 
