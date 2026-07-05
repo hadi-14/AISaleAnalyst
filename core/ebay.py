@@ -45,6 +45,13 @@ else:
 _session: cffi_requests.Session | None = None
 _session_lock = threading.Lock()
 
+# Soft-block detection: track how many items in a row returned 0 results
+# across ALL fallbacks. If this hits _BLOCK_THRESHOLD, we pause and cycle.
+_consecutive_failures: int = 0
+_failures_lock = threading.Lock()
+_BLOCK_THRESHOLD: int = 3       # pause after this many consecutive zero-result items
+_BLOCK_PAUSE_SECONDS: int = 70  # how long to sleep when a block is detected
+
 _REQUEST_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
@@ -493,11 +500,33 @@ def scrape_ebay_comps(
                 )
                 res["fallback_used"] = True
                 return res
+
+            # All fallbacks exhausted with 0 results — check for soft block
+            global _consecutive_failures, _session
+            with _failures_lock:
+                _consecutive_failures += 1
+                fails = _consecutive_failures
+
+            if fails >= _BLOCK_THRESHOLD:
+                print(f"  [eBay] ⚠️  {fails} consecutive items returned 0 results — "
+                      f"eBay soft block detected. Pausing {_BLOCK_PAUSE_SECONDS}s and cycling session...")
+                with _failures_lock:
+                    _consecutive_failures = 0
+                with _session_lock:
+                    _session = None   # Force a fresh warm-up on next request
+                time.sleep(_BLOCK_PAUSE_SECONDS)
+                print("  [eBay] Resuming after pause.")
+
             return {
                 "low": "N/A", "mean": "N/A", "high": "N/A",
                 "count": 0, "link": used_url, "links": [],
                 "fallback_used": False, "query_used": exact_query,
             }
+
+        # Successful result — reset consecutive failure counter
+        global _consecutive_failures
+        with _failures_lock:
+            _consecutive_failures = 0
 
         low_val, mean_val, high_val = process_ebay_prices(prices)
 
