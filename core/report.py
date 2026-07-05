@@ -273,7 +273,8 @@ body { font-family: Arial, sans-serif; font-size: 13px; background: #f9fafb; col
 .img-wrapper img:hover { transform: scale(4.5); z-index: 1000; box-shadow: 0 15px 35px rgba(0,0,0,0.3); border-radius: 2px; }
 table { width: 100%; border-collapse: collapse; background: #fff; }
 thead th { background: #1f2937; color: #f9fafb; padding: 14px 16px; text-align: left;
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: bold; }
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: bold;
+  position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 4px rgba(0,0,0,0.25); }
 thead th.center { text-align: center; }
 tbody tr { border-bottom: 1px solid #e5e7eb; }
 tbody tr:nth-child(even) { background: #fafafa; }
