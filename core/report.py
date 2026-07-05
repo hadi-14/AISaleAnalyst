@@ -267,7 +267,7 @@ body { font-family: Arial, sans-serif; font-size: 13px; background: #f9fafb; col
 .sort-note { padding: 12px 32px; font-size: 12px; color: #6b7280; background: #fff; border-bottom: 1px solid #e5e7eb; }
 .thumb-gallery { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; align-items: center; max-width: 90px; margin: 0 auto; }
 .img-wrapper { border-radius: 4px; position: relative; }
-.img-wrapper img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: zoom-in; transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94); z-index: 1; position: relative; }
+.img-wrapper img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: zoom-in; transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94); z-index: 1; position: relative; transform-origin: left center; }
 .img-wrapper.main { width: 80px; height: 70px; }
 .img-wrapper.sec { width: 38px; height: 38px; }
 .img-wrapper img:hover { transform: scale(4.5); z-index: 1000; box-shadow: 0 15px 35px rgba(0,0,0,0.3); border-radius: 2px; }

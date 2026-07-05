@@ -137,21 +137,22 @@ def calc_financials(item: dict) -> dict:
     # Expected net profit
     profit = net_after_fees - buy_price
     
-    # ROI based on actual buy price
-    raw_roi = (profit / buy_price * 100) if buy_price > 0 else 0.0
+    # ROI based on actual buy price (pure math for display)
+    roi = (profit / buy_price * 100) if buy_price > 0 else 0.0
     
-    # Composite Ranking / Penalties
+    # Composite Ranking / Penalties (used for sorting only)
     if count == 0:
-        # Zero comps penalty: hard 0 ROI so it never ranks top
-        roi = 0.0
+        # Zero comps penalty: hard 0 or negative sort ranking
+        sort_roi = roi if roi < 0 else 0.0
     elif adjusted_confidence < 75:
-        # Confidence penalty: aggressively penalize ROI if confidence is low
-        multiplier = (adjusted_confidence / 100.0) ** 2
-        roi = raw_roi * multiplier
+        # Confidence penalty: only penalize positive rankings
+        if roi > 0:
+            multiplier = (adjusted_confidence / 100.0) ** 2
+            sort_roi = roi * multiplier
+        else:
+            sort_roi = roi
     else:
-        roi = raw_roi
-        
-    roi = max(0.0, roi)
+        sort_roi = roi
 
     return {
         "sell_price":          sell_price,
@@ -166,6 +167,7 @@ def calc_financials(item: dict) -> dict:
         "buy_price":           round(buy_price, 2),
         "profit":              round(profit, 2),
         "roi":                 round(roi, 1),
+        "sort_roi":            sort_roi,
         "adjusted_confidence": adjusted_confidence,
     }
 
@@ -211,7 +213,7 @@ def get_sort_key(item: dict) -> float:
     fin = item.get("financials", {})
 
     if SORT_BY == "roi":
-        return fin.get("roi", 0.0)
+        return fin.get("sort_roi", fin.get("roi", 0.0))
     if SORT_BY == "profit":
         return fin.get("profit", 0.0)
     if SORT_BY == "confidence":

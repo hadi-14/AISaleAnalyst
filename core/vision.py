@@ -56,7 +56,6 @@ Return ONLY a valid JSON object with these exact fields:
   "ebay_fallback_query": "Brand Noun — e.g. Princecraft Boat or Troy-Bilt Chipper (broader query containing ONLY brand and category/noun, used if the specific query returns no results)",
   "ebay_exclusion_keywords": ["manual", "box", "case", "parts", "battery"],
   "platform": "eBay",
-  "ebay_category_id": 26429,
   "ai_value_low": 250,
   "ai_value_high": 500,
   "ai_value_notes": "One line reasoning for your estimate",
@@ -77,15 +76,8 @@ Rules:
 - platform is one of: eBay, Etsy, Depop, Facebook Marketplace
 - ebay_condition MUST be one of: New, Open Box, Used, For parts. Evaluate from visual wear, packaging, etc.
 - ebay_search_query MUST include brand + model number/name + spec if readable — \
-  never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176').
+  never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176'). If the item is a specific type of object (like a pendant, mug, or hat) where a broad search would return unrelated merchandise, you MUST wrap the core noun in double-quotes to force eBay to only return exact matches. Example: 'Detroit Tigers "pendant"' or 'Pyrex "casserole dish"'.
 - ebay_exclusion_keywords MUST be an array of up to 5 single-word lowercase keywords representing parts, accessories, manuals, or boxes that would appear in cheap, unrelated listings and should be EXCLUDED from search results (e.g., ["manual", "carburetor", "blade", "gasket", "box"]). Do NOT include words that are part of the item's actual name.
-- ebay_category_id is the numeric eBay Category ID (sacat) for the item. Refer to these common category IDs:
-  * Antiques: 20081 | Art: 550 | Books: 267 | Clothing: 11450 | Coins & Paper Money: 11116
-  * Collectibles: 1 | Electronics: 293 | Furniture: 20091 | Home & Garden: 11700 | Jewelry: 281
-  * Watches: 31387 | Kitchenware: 20625 | Toys: 220 | Sporting Goods: 382 | Tools: 3110
-  * Cameras: 625 | Musical Instruments: 619 | Video Games: 1249 | Pottery & Glass: 870 | Stamps: 260
-  * Boats: 26429 | Boat Parts: 26443 | Outboard Engines: 152737 | Lawn Mowers: 151756 | Power Tools: 3312
-  If you don't know the exact ID, use the closest broad parent category ID.
 - ai_value_low and ai_value_high are YOUR expert USD estimate, independent of eBay (set realistic values)
 - estate_buy_price is typical estate sale price for this item (10-30% of resale value)
 

@@ -201,7 +201,7 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
             return response.text.strip()
 
     def _call_with_retry(manifest: str, max_retries: int = 5) -> str:
-        delay = 65
+        delay = 30
         for attempt in range(max_retries):
             try:
                 return _call_ai(manifest)

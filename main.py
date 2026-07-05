@@ -275,7 +275,6 @@ def main() -> None:
         query          = item["ai"].get("ebay_search_query") or item["ai"].get("item_name", "")
         item_name      = item["ai"].get("item_name", "")
         ai_val_low     = float(item["ai"].get("ai_value_low", 0) or 0)
-        category_id    = item["ai"].get("ebay_category_id")
         fallback_query = item["ai"].get("ebay_fallback_query")
         ebay_condition = item["ai"].get("ebay_condition")
         exclusion_keywords = item["ai"].get("ebay_exclusion_keywords", [])
@@ -285,7 +284,6 @@ def main() -> None:
             query,
             ai_val_low,
             item_name,
-            category_id,
             fallback_query=fallback_query,
             ebay_condition=ebay_condition,
             exclusion_keywords=exclusion_keywords,

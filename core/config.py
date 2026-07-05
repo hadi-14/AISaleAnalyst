@@ -193,7 +193,7 @@ def image_to_base64(image_path: str) -> str:
     """
     try:
         img = Image.open(image_path)
-        img.thumbnail((120, 120))
+        img.thumbnail((450, 450))
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=70)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
