@@ -268,6 +268,12 @@ def main() -> None:
     comp_counter = 0
     total_unique = len(unique_results)
     print_lock = threading.Lock()
+    
+    import queue
+    ebay_queue = queue.Queue()
+    for item in unique_results:
+        item["_retries"] = 0
+        ebay_queue.put(item)
 
     def process_ebay_item(item):
         nonlocal comp_counter
@@ -288,6 +294,15 @@ def main() -> None:
             ebay_condition=ebay_condition,
             exclusion_keywords=exclusion_keywords,
         )
+        
+        # Requeue once on 0 results so that collateral victims of a soft-block get retried
+        if comps_res["count"] == 0 and item.get("_retries", 0) < 1:
+            item["_retries"] += 1
+            with print_lock:
+                print(f"  [Queue] 0 results for '{query}'. Requeuing to retry after potential cooldown.")
+            ebay_queue.put(item)
+            return
+
         item["comps"] = comps_res
 
         with print_lock:
@@ -298,13 +313,28 @@ def main() -> None:
                 f"{comps_res['high']} ({comps_res['count']} sales)"
             )
 
-    with ThreadPoolExecutor(max_workers=EBAY_WORKERS) as executor:
-        futures = [executor.submit(process_ebay_item, item) for item in unique_results]
-        for future in as_completed(futures):
+    def ebay_worker():
+        while True:
             try:
-                future.result()
+                item = ebay_queue.get_nowait()
+            except queue.Empty:
+                break
+                
+            try:
+                process_ebay_item(item)
             except Exception as exc:
                 print(f"  eBay worker exception: {exc}")
+            finally:
+                ebay_queue.task_done()
+
+    threads = []
+    for _ in range(EBAY_WORKERS):
+        t = threading.Thread(target=ebay_worker)
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
 
     # --- Step 4: Generate report
     import urllib.parse
