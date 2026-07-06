@@ -51,6 +51,7 @@ _consecutive_failures: int = 0
 _failures_lock = threading.Lock()
 _BLOCK_THRESHOLD: int = 3       # pause after this many consecutive zero-result items
 _BLOCK_PAUSE_SECONDS: int = 70  # how long to sleep when a block is detected
+_cooldown_until: float = 0.0    # global timestamp for pausing all workers
 
 _REQUEST_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -263,8 +264,14 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3) ->
     tuple[list[float], list[str]]
         ``(prices, comp_links)``
     """
-    global _session
+    global _session, _cooldown_until
     for attempt in range(max_retries):
+        while True:
+            if time.time() < _cooldown_until:
+                time.sleep(1.0)
+            else:
+                break
+                
         session = _get_session()
         try:
             with _request_lock:
@@ -296,7 +303,7 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3) ->
                     print("  [eBay] Auto-resolving block... sleeping and cycling session.")
                     with _request_lock:
                         _session = None # Force session recreation
-                        time.sleep(15)  # Wait out the temporary IP ban
+                        _cooldown_until = max(_cooldown_until, time.time() + 15)
                     continue
                 else:
                     print("  [eBay] Max retries reached. Raising exception to prevent fallback cascade.")
@@ -430,7 +437,7 @@ def scrape_ebay_comps(
     dict
         Keys: ``low``, ``median``, ``high``, ``count``, ``link``, ``links``, ``fallback_used``.
     """
-    global _consecutive_failures, _session
+    global _consecutive_failures, _session, _cooldown_until
     try:
         import urllib.parse
         cleaned_query = re.sub(r"\b(sold|completed|complete)\b", "", query, flags=re.IGNORECASE).strip()
@@ -514,8 +521,7 @@ def scrape_ebay_comps(
                     _consecutive_failures = 0
                 with _session_lock:
                     _session = None   # Force a fresh warm-up on next request
-                time.sleep(_BLOCK_PAUSE_SECONDS)
-                print("  [eBay] Resuming after pause.")
+                _cooldown_until = time.time() + _BLOCK_PAUSE_SECONDS
 
             return {
                 "low": "N/A", "mean": "N/A", "high": "N/A",
