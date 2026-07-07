@@ -553,3 +553,13 @@ def scrape_ebay_comps(
             "count": 0, "link": "", "links": [],
             "fallback_used": False, "query_used": query,
         }
+
+def cleanup_session():
+    """Close the underlying curl_cffi session to cleanly exit background threads."""
+    global _session
+    if _session is not None:
+        try:
+            _session.close()
+        except Exception:
+            pass
+        _session = None

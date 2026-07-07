@@ -52,7 +52,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP
 from core.deduplication import deduplicate
-from core.ebay import scrape_ebay_comps
+from core.ebay import scrape_ebay_comps, cleanup_session
 from core.report import generate_report
 from core.vision import analyze_image
 from scrapers.ListingExtractor import identifySite
@@ -362,6 +362,9 @@ def main(max_images_override: int | None = None) -> None:
 
     generate_report(unique_results, final_output_path, skipped_items=skipped_results)
     print(f"\nReport successfully saved to {final_output_path}")
+
+    # Clean up background threads from curl_cffi session to allow clean exit
+    cleanup_session()
 
 
 if __name__ == "__main__":
