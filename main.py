@@ -62,7 +62,7 @@ from scrapers.ListingExtractor import identifySite
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main(max_images_override: int | None = None) -> None:
     """
     Run the full AISaleAnalyst pipeline end-to-end.
 
@@ -110,7 +110,8 @@ def main() -> None:
             print(f"Reusing existing images in '{target_folder}'. Skipping download.")
             images_folder = target_folder
         else:
-            images_folder = identifySite(url, max_images=MAX_IMAGES)
+            effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
+            images_folder = identifySite(url, max_images=effective_max)
             # Save the last URL to the directory for future runs
             try:
                 Path(images_folder).mkdir(parents=True, exist_ok=True)
@@ -127,9 +128,10 @@ def main() -> None:
 
     folder      = Path(images_folder)
     extensions  = {".jpg", ".jpeg", ".png", ".webp"}
+    effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
     image_files = sorted(
         f for f in folder.iterdir() if f.suffix.lower() in extensions
-    )[:MAX_IMAGES]
+    )[:effective_max]
 
     if not image_files:
         print(f"No images found in {images_folder}")
@@ -363,4 +365,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="AISaleAnalyst")
+    parser.add_argument("--max-images", type=int, default=None, help="Temporarily override MAX_IMAGES from .env")
+    args = parser.parse_args()
+    main(max_images_override=args.max_images)
