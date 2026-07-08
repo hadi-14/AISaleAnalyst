@@ -92,6 +92,15 @@ def _get_session() -> cffi_requests.Session:
         _session = sess
         return _session
 
+def close_ebay_session():
+    global _session
+    with _session_lock:
+        if _session is not None:
+            try:
+                _session.close()
+            except Exception:
+                pass
+            _session = None
 
 # ---------------------------------------------------------------------------
 # Post-filter: static negative word list
@@ -142,6 +151,8 @@ def should_filter_by_title(title: str, query: str) -> bool:
         eBay listing title text.
     query:
         The search query used to find this listing.
+    inclusion_keywords:
+        List of keywords that MUST appear in the title.
 
     Returns
     -------
@@ -150,6 +161,15 @@ def should_filter_by_title(title: str, query: str) -> bool:
         False -> listing is likely a whole-unit sale.
     """
     title_lower = title.lower()
+
+    if inclusion_keywords:
+        for kw in inclusion_keywords:
+            # Check if keyword is in the title, skip filter if the keyword is a generic instruction
+            if "add specific words" in kw.lower():
+                continue
+            if kw.lower() not in title_lower:
+                return True
+
     query_words = set(re.findall(r"\b\w+\b", query.lower()))
 
     for word in _STATIC_NEGATIVE_WORDS:
@@ -166,7 +186,7 @@ def should_filter_by_title(title: str, query: str) -> bool:
 # HTML scraping helpers (BeautifulSoup)
 # ---------------------------------------------------------------------------
 
-def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[str]]:
+def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str]]:
     """
     Parse sold prices and listing links from an eBay search results HTML page.
 
@@ -206,7 +226,7 @@ def _parse_prices_from_html(html: str, query: str) -> tuple[list[float], list[st
         # Title: used for post-filtering parts/accessories
         title_el = card.select_one("a.s-card__link, [class*='s-card__link'], h3.s-item__title, .s-item__title")
         title = title_el.get_text(strip=True) if title_el else ""
-        if title and should_filter_by_title(title, query):
+        if title and should_filter_by_title(title, query, inclusion_keywords=inclusion_keywords):
             continue
 
         # Price: positive/non-strikethrough = final sold price
@@ -248,7 +268,7 @@ import random
 
 _request_lock = threading.Lock()
 
-def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3) -> tuple[list[float], list[str]]:
+def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str]]:
     """
     Fetch *search_url* via the shared curl_cffi session and extract sold prices.
 
@@ -309,7 +329,7 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3) ->
                     print("  [eBay] Max retries reached. Raising exception to prevent fallback cascade.")
                     raise RuntimeError("eBay Anti-Bot Blocked")
             
-            prices, links = _parse_prices_from_html(resp.text, query)
+            prices, links = _parse_prices_from_html(resp.text, query, inclusion_keywords=inclusion_keywords)
             
             # Save HTML if 0 results, to help diagnose if it's a DOM change or block
             if not prices:
@@ -402,6 +422,7 @@ def scrape_ebay_comps(
     item_name: str = "",
     fallback_query: str | None = None,
     ebay_condition: str | None = None,
+    inclusion_keywords: list[str] | None = None,
     exclusion_keywords: list[str] | None = None,
 ) -> dict:
     """
@@ -471,8 +492,13 @@ def scrape_ebay_comps(
         best_links: list[str]   = []
         best_url: str         = attempts[0]
 
-        for url, label in zip(attempts, labels):
-            prices, comp_links = _fetch_prices_from_url(url, cleaned_query)
+        for i, (url, label) in enumerate(zip(attempts, labels)):
+            if i < 2:
+                # Top 2 strict attempts
+                prices, comp_links = _fetch_prices_from_url(url, cleaned_query, inclusion_keywords=inclusion_keywords)
+            else:
+                # Looser bare attempts
+                prices, comp_links = _fetch_prices_from_url(url, fallback_query or cleaned_query, inclusion_keywords=None)
             
             if len(prices) > len(best_prices):
                 best_prices = prices
@@ -504,6 +530,7 @@ def scrape_ebay_comps(
                     item_name=item_name,
                     fallback_query=None,
                     ebay_condition=ebay_condition,
+                    inclusion_keywords=None,
                     exclusion_keywords=exclusion_keywords,
                 )
                 res["fallback_used"] = True
@@ -553,13 +580,3 @@ def scrape_ebay_comps(
             "count": 0, "link": "", "links": [],
             "fallback_used": False, "query_used": query,
         }
-
-def cleanup_session():
-    """Close the underlying curl_cffi session to cleanly exit background threads."""
-    global _session
-    if _session is not None:
-        try:
-            _session.close()
-        except Exception:
-            pass
-        _session = None

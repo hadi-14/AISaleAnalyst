@@ -52,7 +52,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP
 from core.deduplication import deduplicate
-from core.ebay import scrape_ebay_comps, cleanup_session
+from core.ebay import scrape_ebay_comps, close_ebay_session
 from core.report import generate_report
 from core.vision import analyze_image
 from scrapers.ListingExtractor import identifySite
@@ -285,6 +285,7 @@ def main(max_images_override: int | None = None) -> None:
         ai_val_low     = float(item["ai"].get("ai_value_low", 0) or 0)
         fallback_query = item["ai"].get("ebay_fallback_query")
         ebay_condition = item["ai"].get("ebay_condition")
+        inclusion_keywords = item["ai"].get("ebay_inclusion_keywords", [])
         exclusion_keywords = item["ai"].get("ebay_exclusion_keywords", [])
 
         comps_res = scrape_ebay_comps(
@@ -294,6 +295,7 @@ def main(max_images_override: int | None = None) -> None:
             item_name,
             fallback_query=fallback_query,
             ebay_condition=ebay_condition,
+            inclusion_keywords=inclusion_keywords,
             exclusion_keywords=exclusion_keywords,
         )
         
@@ -362,9 +364,9 @@ def main(max_images_override: int | None = None) -> None:
 
     generate_report(unique_results, final_output_path, skipped_items=skipped_results)
     print(f"\nReport successfully saved to {final_output_path}")
-
-    # Clean up background threads from curl_cffi session to allow clean exit
-    cleanup_session()
+    
+    # Close the shared curl_cffi session to allow clean exit of the Python process
+    close_ebay_session()
 
 
 if __name__ == "__main__":

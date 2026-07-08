@@ -41,6 +41,8 @@ BEFORE naming the item, look for ANY of these identifiers in the image:
 Strictly read the text and decals on the object. If the exact model name/number is not legible or visible, do NOT guess or hallucinate a random model number. Instead, identify key visual specifications and characteristics (e.g., horsepower rating like "8 HP", length like "16 ft", capacity, or engine type) and combine them with the brand to form the item name and query (e.g., "Troy-Bilt 8HP Chipper" or "Princecraft 16ft Boat").
 
 Use every identifier and spec you can read or estimate to build the most specific possible item name and eBay search query.
+If the item needs strict negative filters (like avoiding 'parts', 'manual', or 'box' for electronics, or avoiding 'chip', 'lid' for dishes), populate the `ebay_exclusion_keywords` array dynamically. Otherwise leave it empty []. Do NOT just copy a template.
+Similarly, if there are exact words that MUST be present to be a valid match, populate `ebay_inclusion_keywords` dynamically, otherwise leave it empty [].
 
 Return ONLY a valid JSON object with these exact fields:
 {
@@ -52,9 +54,10 @@ Return ONLY a valid JSON object with these exact fields:
   "condition_notes": "One line condition assessment",
   "confidence": 88,
   "ebay_condition": "Used — one of: New, Open Box, Used, For parts",
-  "ebay_search_query": "Brand Model# — e.g. Princecraft Super Pro 176 or Troy-Bilt Tomahawk (do NOT combine multiple distinct assets like boat and outboard HP, e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176', not 'Princecraft 176 Boat with 115 Outboard Motor')",
-  "ebay_fallback_query": "Brand Noun — e.g. Princecraft Boat or Troy-Bilt Chipper (broader query containing ONLY brand and category/noun, used if the specific query returns no results)",
-  "ebay_exclusion_keywords": ["manual", "box", "case", "parts", "battery"],
+  "ebay_search_query": "Brand Model# — e.g. Princecraft Super Pro 176. For highly generic items (e.g. glassware, unbranded tools), include specific descriptive keywords (material, color, style) so it does not match unrelated items sharing the same brand (e.g. use 'V8 Glass Collectible Water Bottle', not just 'V8 Bottle'). Do NOT combine multiple distinct assets into one query.",
+  "ebay_fallback_query": "Brand Noun — e.g. Princecraft Boat. (A slightly broader query used if the specific query returns no results)",
+  "ebay_inclusion_keywords": [],
+  "ebay_exclusion_keywords": [],
   "platform": "eBay",
   "ai_value_low": 250,
   "ai_value_high": 500,
@@ -69,7 +72,7 @@ Return ONLY a valid JSON object with these exact fields:
 }
 
 Rules:
-- Skip Conditions: Set "skip": true ONLY if the image is completely blurry, dark, empty, is a house structural view (e.g., empty walls, window panes, cracks, doorways), OR if the item is a modern consumable/grocery item with negligible resale value (e.g., modern V8 juice bottle, half-used household supplies, basic canned goods). Do NOT try to appraise everyday grocery items unless they are clear vintage/antique advertising collectibles.
+- Skip Conditions: Set "skip": true ONLY if the image is completely blurry, dark, empty, or is a house structural view (e.g., empty walls, window panes, cracks, doorways, floors with no items).
 - Multi-Item Flag: Set "multi_item_detected": true if the photo shows a cluttered scene, shelf, or group of multiple distinct saleable items (e.g., 5 different vases, a box of random tools, a shelf of books). You should still identify the single most prominent/valuable item in the photo, but flagging it alerts the human reviewer to hidden inventory.
 - Priority for Model/Product Identification: Prioritize identifying the exact brand and model number/name. If the exact model is not legible or identified, do NOT skip the image. Instead, set "exact_model_identified": false, and identify the general product/item type (e.g., "Princecraft Boat" or just "Boat") by combining the brand with the category/noun or any general visual specifications (e.g., HP rating, length, etc.).
 - confidence is 0-100 integer. Base this ONLY on how clearly you can identify the object from the photo. Do NOT artificially lower this score just because an exact model number is missing (we apply penalties for that downstream).
@@ -87,9 +90,8 @@ Identifying Standalone/Detachable Equipment:
 
 Identifying Generic vs Specific Items (CRITICAL):
 - Generic Items: If the item is a generic household good (e.g., plain wood nightstand, photo album, folding TV tray, unbranded glass jar, generic decor) and you CANNOT identify a specific manufacturer, vintage designer, or unique collectible feature, you MUST either:
-  1. Set "skip": true if the item has negligible resale value (e.g. under $15).
+  1. Set "skip": true if the item has negligible resale value (e.g. under $10).
   2. Set "confidence" very low (e.g., 20-40) and set "exact_model_identified": false.
-- Consumables: If the item is a grocery item, pantry good, or common household consumable (e.g. soap, food, cleaning supply), you MUST set "skip": true regardless of the item value.
 - Do NOT use generic nouns for the search query (e.g., never search "Wooden Nightstand" or "Folding TV Tray Table"). Generic searches will match expensive, unrelated designer pieces on eBay and artificially inflate valuations. The search query MUST contain distinguishing features (material, brand, vintage era, unique style) if you decide not to skip it.
 
 item_group rules — READ CAREFULLY:
