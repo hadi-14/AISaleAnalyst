@@ -86,6 +86,9 @@ TOP_N: int = _env_int("TOP_N", 20)
 #: When True, run a second AI-powered deduplication pass after fuzzy matching.
 USE_AI_DEDUP: bool = _env_bool("USE_AI_DEDUP", True)
 
+#: When True, pass the actual thumbnail images to the AI during deduplication.
+USE_VISION_DEDUP: bool = _env_bool("USE_VISION_DEDUP", False)
+
 #: When True, enable deduplication. When False, bypass all deduplication passes.
 USE_DEDUP: bool = _env_bool("USE_DEDUP", True)
 

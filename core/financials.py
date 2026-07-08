@@ -111,7 +111,7 @@ def calc_financials(item: dict) -> dict:
 
     # Actual estate sale buy price (AI estimate or default to 20 % of sell price)
     buy_price = float(ai.get("estate_buy_price", 0) or 0)
-    if buy_price == 0:
+    if buy_price < sell_price * 0.10:
         buy_price = sell_price * 0.20
 
     # Calculate adjusted confidence based on listing match counts

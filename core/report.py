@@ -206,7 +206,7 @@ def build_skipped_row(rank: int, item: dict) -> str:
         if thumb else "—"
     )
     
-    notes = ai.get("ai_value_notes") or ai.get("condition_notes") or "Skipped (blurry, dark, empty, or structural view)"
+    notes = ai.get("skip_reason") or ai.get("ai_value_notes") or ai.get("condition_notes") or "Skipped (blurry, dark, empty, or structural view)"
     
     return f"""
     <tr>

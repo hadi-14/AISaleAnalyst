@@ -218,6 +218,10 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
         if heading_text.startswith("0 result") or "no exact matches" in heading_text:
             return [], []
 
+    # Detect loading skeleton pages which mean eBay didn't return real results
+    if soup.select_one(".srp-skeleton, .skeleton-placeholder, #srp-skeleton"):
+        raise RuntimeError("eBay returned a loading skeleton page")
+
     # Select the main listing cards (supports both traditional and new SSR layouts)
     # Target only children of the main srp-results list to avoid "Similar sponsored items" or "Results matching fewer words"
     cards = soup.select("ul.srp-results > li.s-card, ul.srp-results > li.s-item")
@@ -266,8 +270,6 @@ import threading
 import time
 import random
 
-_request_lock = threading.Lock()
-
 def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str]]:
     """
     Fetch *search_url* via the shared curl_cffi session and extract sold prices.
@@ -294,16 +296,16 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, in
                 
         session = _get_session()
         try:
-            with _request_lock:
-                # Sleep to mimic human browsing and prevent CAPTCHAs.
-                # Increase sleep time if we are retrying due to a block.
-                sleep_time = random.uniform(2.5, 4.5) if attempt == 0 else random.uniform(10.0, 15.0)
-                time.sleep(sleep_time)
-                resp = session.get(
-                    search_url,
-                    headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
-                    timeout=20,
-                )
+            # Independent per-thread sleep to mimic human browsing and prevent CAPTCHAs.
+            # Increase sleep time if we are retrying due to a block.
+            sleep_time = random.uniform(1.0, 2.0) if attempt == 0 else random.uniform(5.0, 10.0)
+            time.sleep(sleep_time)
+            
+            resp = session.get(
+                search_url,
+                headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
+                timeout=20,
+            )
             
             text_lower = resp.text.lower()
             is_blocked = False
@@ -320,10 +322,9 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, in
                 
             if is_blocked:
                 if attempt < max_retries - 1:
-                    print("  [eBay] Auto-resolving block... sleeping and cycling session.")
-                    with _request_lock:
-                        _session = None # Force session recreation
-                        _cooldown_until = max(_cooldown_until, time.time() + 15)
+                    print(f"  [eBay] Auto-resolving block... sleeping and cycling session.")
+                    _session = None # Force session recreation
+                    _cooldown_until = max(_cooldown_until, time.time() + 15)
                     continue
                 else:
                     print("  [eBay] Max retries reached. Raising exception to prevent fallback cascade.")
@@ -477,14 +478,10 @@ def scrape_ebay_comps(
 
         attempts = [
             f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{exclusion_str}{_EBAY_SUFFIX}{floor_param}{condition_param}",
-            f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{exclusion_str}{_EBAY_SUFFIX}{floor_param}{condition_param}" if strict_floor else f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{exclusion_str}{_EBAY_SUFFIX}{condition_param}",
-            f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{''.join(f'+-{urllib.parse.quote_plus(kw)}' for kw in neg_keywords[:3])}{_EBAY_SUFFIX}{floor_param}" if strict_floor else f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{''.join(f'+-{urllib.parse.quote_plus(kw)}' for kw in neg_keywords[:3])}{_EBAY_SUFFIX}",
             f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{_EBAY_SUFFIX}{floor_param}" if strict_floor else f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{_EBAY_SUFFIX}",
         ]
         labels = [
             "exclusions+floor+condition",
-            "exclusions+floor+condition" if strict_floor else "exclusions+condition only",
-            "top-3 exclusions+floor" if strict_floor else "top-3 exclusions",
             "bare query+floor" if strict_floor else "bare query",
         ]
 
@@ -493,11 +490,11 @@ def scrape_ebay_comps(
         best_url: str         = attempts[0]
 
         for i, (url, label) in enumerate(zip(attempts, labels)):
-            if i < 2:
-                # Top 2 strict attempts
+            if i == 0:
+                # Top strict attempt
                 prices, comp_links = _fetch_prices_from_url(url, cleaned_query, inclusion_keywords=inclusion_keywords)
             else:
-                # Looser bare attempts
+                # Looser bare attempt
                 prices, comp_links = _fetch_prices_from_url(url, fallback_query or cleaned_query, inclusion_keywords=None)
             
             if len(prices) > len(best_prices):
@@ -507,9 +504,9 @@ def scrape_ebay_comps(
 
             if len(prices) >= 3:
                 if label != "exclusions+floor+condition":
-                    print(f"  [fallback -> {label}]")
+                    print(f"  [{item_name}] fallback -> {label}")
                 break
-            print(f"  [{len(prices)} results with {label} - trying next]")
+            print(f"  [{item_name}] {len(prices)} results with {label} - trying next")
 
         prices = best_prices
         comp_links = best_links
@@ -522,7 +519,7 @@ def scrape_ebay_comps(
 
         if not prices:
             if fallback_query:
-                print(f"  [0 results -> trying fallback query: '{fallback_query}']")
+                print(f"  [{item_name}] 0 results -> trying fallback query: '{fallback_query}'")
                 res = scrape_ebay_comps(
                     driver,
                     fallback_query,

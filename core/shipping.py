@@ -135,7 +135,11 @@ def get_shipping_rate(
         ``est_days`` (int | None), ``source`` (str — ``"shippo"`` or ``"fallback"``).
     """
     # --- Local-pickup items: never need a shipping rate
-    if _is_local_pickup(item_group, item_name):
+    # If the AI explicitly estimated dimensions and weight as 0, or if it matches
+    # the legacy hardcoded local pickup list, treat as freight/pickup.
+    ai_l = float(length or 0)
+    ai_w = float(weight or 0)
+    if _is_local_pickup(item_group, item_name) or (ai_l == 0.0 and ai_w == 0.0):
         return {
             "cost":    0.0,
             "carrier": "Local Pickup",

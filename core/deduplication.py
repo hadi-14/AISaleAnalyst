@@ -21,6 +21,7 @@ from difflib import SequenceMatcher
 from .config import (
     AI_PROVIDER,
     USE_AI_DEDUP,
+    USE_VISION_DEDUP,
     fix_and_parse_json,
 )
 
@@ -44,28 +45,7 @@ _DETAIL_WORDS = {
     "charger", "battery", "batteries", "headset", "headphones",
 }
 
-#: System prompt for the AI deduplication pass.
-_AI_DEDUP_PROMPT = (
-    "Below are numbered items from an estate sale, each identified by AI from a photo.\n\n"
-    "Task: Group the INDICES (0-based) that depict the EXACT SAME physical object shown "
-    "from different angles or distances, OR accessories/components that physically belong "
-    "to one main asset being sold as a bundle.\n\n"
-    "THE CORE RULE — memorise this:\n"
-    "  Group = same physical object, multiple photos.\n"
-    "  Do NOT group = different objects, even if same type, brand, material, or style.\n\n"
-    "Specific rules:\n"
-    "- SAME OBJECT / DIFFERENT VIEW: Only group indices when every photo in the group "
-    "literally shows the same physical object from a different angle, distance, or lighting. "
-    "Ask yourself: 'Could I place all these photos in the same eBay listing for one item?' "
-    "If yes, group them. If not, they are separate groups.\n"
-    "- ACCESSORIES & ATTACHMENTS: Group any accessory, attachment, component, or installed "
-    "part WITH its single main parent asset.\n"
-    "- USE CONDITION NOTES: The condition notes often contain specific visual details. If two items have similar names but clearly different visual condition notes (e.g., one is in a box, one is rusty), they are DIFFERENT items. Do NOT group them.\n"
-    "- STRICTNESS IS REQUIRED: If you are not 100% certain two items are the exact same physical object based on their names and conditions, DO NOT group them! Over-grouping destroys data. It is perfectly fine if every item remains in its own group of 1.\n"
-    "- Every index must appear in exactly one group.\n\n"
-    "Return ONLY a JSON array of arrays, e.g.: [[0,1,2,5],[3,4],[6]]\n"
-    "No explanation, no markdown."
-)
+
 
 
 def _normalize(s: str) -> str:
@@ -141,37 +121,39 @@ def _best_in_group(items: list) -> dict:
 # ---------------------------------------------------------------------------
 
 
+_AI_BATCH_PROMPT = (
+    "You are an estate sale photo organizer. Below are numbered items from an estate sale.\n"
+    "The photos were taken in order as the photographer walked through the house.\n\n"
+    "YOUR TASK: Group indices that represent the SAME buying opportunity.\n\n"
+    "GROUP these together (they are the same buying opportunity):\n"
+    "- Multiple angles of the SAME object (wide shot + close-up + detail + back view)\n"
+    "- A photo of an item + a photo of its price tag, label, or maker's mark\n"
+    "- A generic description + a specific name for the same item\n"
+    "  Example: 'Floral Painting Print' near 'Jean Robie A Still Life of Roses' = SAME painting\n"
+    "- Built-in components of a single unit\n"
+    "  Example: 'Magnavox Turntable' + 'Magnavox Radio' + 'Stereo Console Cabinet' = all ONE console\n"
+    "- Identical matching multiples (e.g. 4 matching dining chairs)\n\n"
+    "DO NOT group these (they are different buying opportunities):\n"
+    "- Two different pieces of furniture that happen to be near each other\n"
+    "- Two different paintings or art pieces (even if both are floral)\n"
+    "- Items that are merely the same category but are clearly separate objects\n\n"
+    "KEY INSIGHT: Estate sale photographers typically take 2-5 photos per item in sequence:\n"
+    "first a wide shot, then close-ups of details/labels/tags. Look for these sequential clusters.\n\n"
+    "Every index must appear in exactly one group.\n"
+    "Return ONLY a JSON array of arrays, e.g.: [[0,1,2],[3,4],[5]]\n"
+    "No explanation, no markdown."
+)
+
 def deduplicate_ai(results: list, batch_size: int = 30) -> list:
     """
     Use the AI model to group items that depict the same physical object,
     then return one representative per group.
-
-    Items are processed in text-only batches (item name + group label) to
-    stay well under token-per-minute limits.  Images are NOT sent — the
-    AI-generated labels already carry enough signal for deduplication.
-    Falls back to returning ``results`` unchanged if every batch fails.
-
-    Parameters
-    ----------
-    results:
-        Output of :func:`deduplicate_fuzzy`.
-    batch_size:
-        Maximum number of items per AI call (default 30 keeps well under
-        the 30 K TPM limit even with a large system prompt).
-
-    Returns
-    -------
-    list
-        Further-deduplicated list (one representative per physical object).
     """
     import time
 
     if len(results) <= 1:
         return results
 
-    # ------------------------------------------------------------------ #
-    # Build a compact text manifest — no images, just names & groups      #
-    # ------------------------------------------------------------------ #
     def _make_manifest(batch: list, offset: int) -> str:
         lines = []
         for local_i, r in enumerate(batch):
@@ -182,42 +164,62 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
             lines.append(f"{offset + local_i}: {name} [{group}] | Cond: {notes}")
         return "\n".join(lines)
 
-    def _call_ai(manifest: str) -> str:
-        """Send one batch to the active AI provider; returns raw response text."""
-        prompt = _AI_DEDUP_PROMPT + "\n\nItems:\n" + manifest
+    def _call_ai(manifest: str, images: list[str] = None, offset: int = 0) -> str:
+        base_prompt = _AI_BATCH_PROMPT + "\n\nItems:"
 
         if AI_PROVIDER == "openai":
+            content = [{"type": "text", "text": base_prompt}]
+            if images:
+                for i, img_b64 in enumerate(images):
+                    content.append({"type": "text", "text": f"\nItem {offset + i}:"})
+                    if img_b64:
+                        content.append({"type": "image_url", "image_url": {"url": img_b64}})
+            content.append({"type": "text", "text": "\n" + manifest})
+            
             response = openai_client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=400,
+                messages=[{"role": "user", "content": content}],
+                max_tokens=500,
             )
             return response.choices[0].message.content.strip()
         else:  # gemini
+            contents = [base_prompt]
+            if images:
+                import base64
+                from io import BytesIO
+                from PIL import Image
+                for i, img_b64 in enumerate(images):
+                    contents.append(f"\nItem {offset + i}:")
+                    if img_b64:
+                        try:
+                            b64_data = img_b64.split(",", 1)[1] if "," in img_b64 else img_b64
+                            img_bytes = base64.b64decode(b64_data)
+                            img = Image.open(BytesIO(img_bytes))
+                            contents.append(img)
+                        except Exception:
+                            pass
+            contents.append("\n" + manifest)
+
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=[prompt],
+                contents=contents,
             )
             return response.text.strip()
 
-    def _call_with_retry(manifest: str, max_retries: int = 5) -> str:
-        delay = 30
+    def _call_with_retry(manifest: str, images: list[str] = None, offset: int = 0, max_retries: int = 4) -> str:
+        delay = 15
         for attempt in range(max_retries):
             try:
-                return _call_ai(manifest)
+                return _call_ai(manifest, images=images, offset=offset)
             except Exception as exc:
                 exc_str = str(exc).lower()
                 if ("429" in exc_str or "rate" in exc_str or "tpm" in exc_str or "limit" in exc_str) and attempt < max_retries - 1:
-                    print(f"  [AI dedup] Rate limited — waiting {delay}s before retry {attempt + 2}/{max_retries}...")
+                    print(f"  [AI dedup] Rate limited — waiting {delay}s before retry...")
                     time.sleep(delay)
                     continue
+                print(f"  [AI dedup] Batch error: {exc}")
                 raise
 
-    # ------------------------------------------------------------------ #
-    # Process in batches; collect (global_index → group_id) mapping       #
-    # ------------------------------------------------------------------ #
-    # global_group_id for each item — items that should merge share the   #
-    # same id.  Start with each item in its own group.                    #
     parent: list[int] = list(range(len(results)))
 
     def find(x: int) -> int:
@@ -238,11 +240,17 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
         batch  = results[start:end]
 
         manifest = _make_manifest(batch, offset=start)
+        
+        images = []
+        if USE_VISION_DEDUP:
+            for r in batch:
+                images.append(r.get("thumb", ""))
+                
         try:
-            text   = _call_with_retry(manifest)
+            text   = _call_with_retry(manifest, images=images if USE_VISION_DEDUP else None, offset=start)
+            from .config import fix_and_parse_json
             groups = fix_and_parse_json(text)
 
-            # Validate and union-find within this batch
             seen: set[int] = set()
             for g in groups:
                 if not g:
@@ -260,19 +268,22 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
             print(f"  [AI dedup] Batch {batch_num + 1}/{num_batches} processed ({len(batch)} items)")
 
         except Exception as exc:
-            print(f"  [AI dedup] Batch {batch_num + 1}/{num_batches} failed ({exc}) — items kept as-is")
+            print(f"  [AI dedup] Batch {batch_num + 1}/{num_batches} failed — items kept as-is")
 
     if not any_batch_succeeded:
         print("  [AI dedup] All batches failed — keeping fuzzy results")
         return results
 
-    # ------------------------------------------------------------------ #
-    # Collapse union-find groups → pick best representative per group     #
-    # ------------------------------------------------------------------ #
     group_map: dict[int, list] = {}
     for i, item in enumerate(results):
         root = find(i)
         group_map.setdefault(root, []).append(item)
+
+    # Log multi-item groups for debugging
+    for members in group_map.values():
+        if len(members) > 1:
+            names = [m["ai"].get("item_name", "?") for m in members]
+            print(f"  [AI dedup] Grouped: {' + '.join(names)}")
 
     deduped = [_best_in_group(members) for members in group_map.values()]
     print(f"  [AI dedup]    {len(results)} images -> {len(deduped)} unique items")
