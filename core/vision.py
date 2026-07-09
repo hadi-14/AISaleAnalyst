@@ -84,7 +84,7 @@ Rules:
 - ebay_condition MUST be one of: New, Open Box, Used, For parts. Evaluate from visual wear, packaging, etc.
 - ebay_search_query MUST include brand + model number/name + spec if readable — \
   never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176'). If the item is a specific type of object (like a pendant, mug, or hat) where a broad search would return unrelated merchandise, you MUST wrap the core noun in double-quotes to force eBay to only return exact matches. Example: 'Detroit Tigers "pendant"' or 'Pyrex "casserole dish"'.
-- ebay_exclusion_keywords MUST be an array of up to 5 single-word lowercase keywords representing parts, accessories, manuals, or boxes that would appear in cheap, unrelated listings and should be EXCLUDED from search results (e.g., ["manual", "carburetor", "blade", "gasket", "box"]). Do NOT include words that are part of the item's actual name.
+- ebay_exclusion_keywords MUST be an array of up to 5 single-word lowercase keywords representing parts, accessories, manuals, or unrelated items that share similar words. Generate HIGHLY SPECIFIC exclusions based on the item type. For example: if the item is a 'Leather Armchair', exclude ["cover", "cushion", "leg", "slipcover", "jacket"]. If it is a camera, exclude ["lens", "cap", "strap", "manual", "battery"]. Do NOT just copy the examples. Do NOT include words that are part of the item's actual name.
 - ai_value_low and ai_value_high are YOUR expert USD estimate, independent of eBay (set realistic values)
 - estate_buy_price is typical estate sale price for this item (10-30% of resale value)
 
@@ -115,10 +115,10 @@ item_group rules — READ CAREFULLY:
     EXACT same item_group string
 
 - Package dimension rules (pkg_length_in, pkg_width_in, pkg_height_in, pkg_weight_lb):
-  - Estimate the BOXED shipping dimensions in inches and weight in pounds as if you were packaging this item to ship via USPS or UPS.
+  - Estimate the BOXED shipping dimensions in inches and weight in pounds as if you were packaging this item to ship via USPS, UPS, or LTL Freight.
   - Include padding/box walls in your dimension estimate (add ~2 inches per side).
-  - For local-pickup / freight items (boats, vehicles, large furniture, tractors) set all four values to 0.
-  - Be realistic — a wristwatch ships in a ~6x4x3in 0.5lb box; a power drill in a ~14x10x8in 6lb box.
+  - You MUST provide accurate dimensions and weight for ALL items, regardless of size (including large furniture, appliances, and vehicles). Do NOT use 0 for any item.
+  - Be realistic — a wristwatch ships in a ~6x4x3in 0.5lb box; a power drill in a ~14x10x8in 6lb box; a sofa in a ~84x36x36in 150lb crate.
   - Examples to guide your estimates:
       - Smartphone/Watch: 6x4x3 in, 1 lb
       - Shoes: 14x10x6 in, 3 lb

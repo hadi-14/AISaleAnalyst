@@ -45,6 +45,9 @@ Project layout
         └── MaxSold.py
 """
 
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+
 import time
 import json
 import threading

@@ -68,21 +68,41 @@ _LIGHTWEIGHT_GROUPS = {
 }
 
 
-def _flat_rate_fallback(item_group: str = "", item_name: str = "") -> dict:
-    """Return a flat-rate estimate dict when Shippo is unavailable."""
-    text = f"{item_group} {item_name}".lower()
-    if any(g in text for g in _LOCAL_PICKUP_GROUPS):
-        cost = 0.0
-        note = "Local pickup / freight"
-    elif any(g in text for g in _HEAVY_SHIPPABLE_GROUPS):
+def _flat_rate_fallback(item_group: str = "", item_name: str = "", length: float = 0, width: float = 0, height: float = 0, weight: float = 0) -> dict:
+    """Return a flat-rate estimate dict when Shippo is unavailable or rejects dimensions."""
+    girth = length + (2 * width) + (2 * height)
+    
+    # 1. Size/Weight based rules (Priority)
+    if weight >= 100 or length >= 108 or girth >= 165:
+        # LTL Freight rough estimate: $150 minimum + $1.00 per lb over 100 lbs
+        cost = 150.0 + max(0, weight - 100) * 1.0
+        note = "Estimated (LTL Freight)"
+    elif weight > 50 or length > 36:
         cost = 35.0
-        note = "Estimated (heavy item)"
-    elif any(g in text for g in _LIGHTWEIGHT_GROUPS):
+        note = "Estimated (heavy/large item)"
+    elif 0 < weight <= 5 and length <= 16:
         cost = 8.0
         note = "Estimated (lightweight)"
-    else:
+    elif length > 0 and weight > 0:
         cost = 15.0
         note = "Estimated (standard)"
+    
+    # 2. Legacy Keyword rules (Fallback if dimensions are 0)
+    else:
+        text = f"{item_group} {item_name}".lower()
+        if any(g in text for g in _LOCAL_PICKUP_GROUPS):
+            cost = 150.0
+            note = "Estimated (LTL Freight)"
+        elif any(g in text for g in _HEAVY_SHIPPABLE_GROUPS):
+            cost = 35.0
+            note = "Estimated (heavy item)"
+        elif any(g in text for g in _LIGHTWEIGHT_GROUPS):
+            cost = 8.0
+            note = "Estimated (lightweight)"
+        else:
+            cost = 15.0
+            note = "Estimated (standard)"
+
     return {
         "cost":    cost,
         "carrier": "Estimated",
@@ -134,12 +154,10 @@ def get_shipping_rate(
         Keys: ``cost`` (float), ``carrier`` (str), ``service`` (str),
         ``est_days`` (int | None), ``source`` (str — ``"shippo"`` or ``"fallback"``).
     """
-    # --- Local-pickup items: never need a shipping rate
-    # If the AI explicitly estimated dimensions and weight as 0, or if it matches
-    # the legacy hardcoded local pickup list, treat as freight/pickup.
+    # If the AI explicitly estimated dimensions and weight as 0, treat as freight/pickup.
     ai_l = float(length or 0)
     ai_w = float(weight or 0)
-    if _is_local_pickup(item_group, item_name) or (ai_l == 0.0 and ai_w == 0.0):
+    if (ai_l == 0.0 and ai_w == 0.0):
         return {
             "cost":    0.0,
             "carrier": "Local Pickup",
@@ -147,10 +165,6 @@ def get_shipping_rate(
             "est_days": None,
             "source":  "local_pickup",
         }
-
-    # --- No Shippo key configured → flat-rate fallback
-    if not SHIPPO_API_KEY:
-        return _flat_rate_fallback(item_group, item_name)
 
     # --- Resolve dimensions
     if SHIP_MANUAL_DIMS:
@@ -166,6 +180,10 @@ def get_shipping_rate(
         w  = max(float(width   or 0), 1.0)
         h  = max(float(height  or 0), 1.0)
         wt = max(float(weight  or 0), 0.1)
+
+    # --- No Shippo key configured → flat-rate fallback
+    if not SHIPPO_API_KEY:
+        return _flat_rate_fallback(item_group, item_name, l, w, h, wt)
 
     try:
         import shippo
@@ -207,7 +225,13 @@ def get_shipping_rate(
 
         rates = shipment.rates if shipment and shipment.rates else []
         if not rates:
-            return _flat_rate_fallback(item_group, item_name)
+            return {
+                "cost":    0.0,
+                "carrier": "Shippo API",
+                "service": "No rates available",
+                "est_days": None,
+                "source":  "shippo_error",
+            }
 
         # Sort all rates cheapest first
         sorted_rates = sorted(rates, key=lambda r: float(r.amount))
@@ -238,6 +262,12 @@ def get_shipping_rate(
         }
 
     except Exception as exc:
-        # Never crash the pipeline — fall back silently
-        print(f"  [Shipping] Shippo error ({type(exc).__name__}): {exc} — using flat-rate fallback")
-        return _flat_rate_fallback(item_group, item_name)
+        # Never crash the pipeline — return error state
+        print(f"  [Shipping] Shippo error ({type(exc).__name__}): {exc}")
+        return {
+            "cost":    0.0,
+            "carrier": "Shippo API",
+            "service": "API Error",
+            "est_days": None,
+            "source":  "shippo_error",
+        }

@@ -95,7 +95,7 @@ def download_one(task: dict) -> dict:
             data = resp.read()
         with open(filepath, "wb") as f:
             f.write(data)
-        log(f"  ✓ [{idx:03d}/{total}] {filename}  ({len(data)//1024} KB)")
+        log(f"  [OK] [{idx:03d}/{total}] {filename}  ({len(data)//1024} KB)")
         return {
             "ok":          True,
             "index":       idx,
@@ -107,7 +107,7 @@ def download_one(task: dict) -> dict:
             "order":       pic.get("pictureOrder"),
         }
     except Exception as e:
-        log(f"  ✗ [{idx:03d}/{total}] {filename}  ERROR: {e}")
+        log(f"  [FAIL] [{idx:03d}/{total}] {filename}  ERROR: {e}")
         return {"ok": False, "index": idx, "url": url, "error": str(e)}
 
 
@@ -212,8 +212,8 @@ def download_images(sale_data: dict, output_dir: str, workers: int = 16, max_ima
 
     print(f"\n{'='*50}")
     print(f"Done in {elapsed:.1f}s")
-    print(f"✓ Downloaded : {len(ok)}")
-    print(f"✗ Failed     : {len(failed)}")
+    print(f"Downloaded : {len(ok)}")
+    print(f"Failed     : {len(failed)}")
     print(f"Links JSON   : {links_path}")
     print(f"Manifest     : {manifest_path}")
     return manifest

@@ -172,6 +172,18 @@ def should_filter_by_title(title: str, query: str) -> bool:
 
     query_words = set(re.findall(r"\b\w+\b", query.lower()))
 
+    # Positive Match Filter: Require at least some core query nouns to appear in title
+    stop_words = {"vintage", "antique", "retro", "mid-century", "midcentury", "set", "the", "a", "an", "and", "or", "with", "of", "in", "on", "for"}
+    core_query_words = query_words - stop_words
+    
+    if core_query_words:
+        title_words = set(re.findall(r"\b\w+\b", title_lower))
+        matches = len(core_query_words.intersection(title_words))
+        # Require at least 1 core word. If there are 3+ core words, require at least 2.
+        required_matches = 2 if len(core_query_words) >= 3 else 1
+        if matches < required_matches:
+            return True
+
     for word in _STATIC_NEGATIVE_WORDS:
         if re.search(r"\b" + re.escape(word) + r"\b", title_lower):
             singular = word[:-1] if word.endswith("s") else word
@@ -476,12 +488,18 @@ def scrape_ebay_comps(
         condition_param = get_condition_param(ebay_condition)
         strict_floor    = (ai_val_low >= 100.0)
 
+        top3_exclusion_str = "".join(f"+-{urllib.parse.quote_plus(kw)}" for kw in neg_keywords[:3])
+
         attempts = [
             f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{exclusion_str}{_EBAY_SUFFIX}{floor_param}{condition_param}",
+            f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{exclusion_str}{_EBAY_SUFFIX}{floor_param}" if strict_floor else f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{exclusion_str}{_EBAY_SUFFIX}",
+            f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{top3_exclusion_str}{_EBAY_SUFFIX}{floor_param}" if strict_floor else f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{top3_exclusion_str}{_EBAY_SUFFIX}",
             f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{_EBAY_SUFFIX}{floor_param}" if strict_floor else f"https://www.ebay.com/sch/i.html?_nkw={base_nkw}{_EBAY_SUFFIX}",
         ]
         labels = [
             "exclusions+floor+condition",
+            "exclusions+floor (no condition)" if strict_floor else "exclusions only (no condition)",
+            "top-3 exclusions+floor" if strict_floor else "top-3 exclusions",
             "bare query+floor" if strict_floor else "bare query",
         ]
 
@@ -490,8 +508,8 @@ def scrape_ebay_comps(
         best_url: str         = attempts[0]
 
         for i, (url, label) in enumerate(zip(attempts, labels)):
-            if i == 0:
-                # Top strict attempt
+            if i < 3:
+                # Top strict attempts
                 prices, comp_links = _fetch_prices_from_url(url, cleaned_query, inclusion_keywords=inclusion_keywords)
             else:
                 # Looser bare attempt
