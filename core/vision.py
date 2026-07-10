@@ -202,6 +202,9 @@ def analyze_image(image_path: str) -> dict:
             exc_str = str(exc).lower()
             # If rate limit occurs, wait 30s and try again until it succeeds
             if "429" in exc_str or "rate" in exc_str or "request" in exc_str or "tpm" in exc_str or "limit" in exc_str:
+                if attempt >= 3:
+                    print(f"  [Rate Limit] {Path(image_path).name} hit limit - Max retries (3) reached. Skipping.")
+                    return {"skip": True, "skip_reason": "AI rate limit max retries exceeded"}
                 print(f"  [Rate Limit] {Path(image_path).name} hit limit - Thread waiting 30s before retry (Attempt {attempt})...")
                 time.sleep(30)
                 attempt += 1

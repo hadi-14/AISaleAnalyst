@@ -113,6 +113,11 @@ def main(max_images_override: int | None = None) -> None:
             print(f"Reusing existing images in '{target_folder}'. Skipping download.")
             images_folder = target_folder
         else:
+            import shutil
+            if Path(target_folder).exists():
+                print(f"Clearing old data from '{target_folder}'...")
+                shutil.rmtree(target_folder, ignore_errors=True)
+                
             effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
             images_folder = identifySite(url, max_images=effective_max)
             # Save the last URL to the directory for future runs
@@ -247,11 +252,24 @@ def main(max_images_override: int | None = None) -> None:
         threads = []
         for _ in range(VISION_WORKERS):
             t = threading.Thread(target=worker)
+            t.daemon = True
             t.start()
             threads.append(t)
             
-        for t in threads:
-            t.join()
+        try:
+            for t in threads:
+                while t.is_alive():
+                    t.join(0.5)
+        except KeyboardInterrupt:
+            print("\n[!] Ctrl+C detected! Shutting down vision workers...")
+            # Empty the queue so threads stop
+            while not task_queue.empty():
+                try:
+                    task_queue.get_nowait()
+                except queue.Empty:
+                    break
+            import sys
+            sys.exit(1)
     else:
         print("All images loaded from cache. No new analysis needed.")
 
