@@ -158,25 +158,30 @@ def analyze_image(image_path: str) -> dict:
         on any error or unrecognisable image.
     """
     import time
-    
+
     attempt = 1
     while True:
         try:
             if AI_PROVIDER == "openai":
                 with open(image_path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode()
-                ext  = Path(image_path).suffix.lower().replace(".", "")
+                ext = Path(image_path).suffix.lower().replace(".", "")
                 mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
 
                 response = openai_client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text",      "text": VISION_PROMPT},
-                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
-                        ]
-                    }],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": VISION_PROMPT},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                },
+                            ],
+                        }
+                    ],
                     max_tokens=500,
                     temperature=0.0,
                     response_format={"type": "json_object"},
@@ -185,14 +190,14 @@ def analyze_image(image_path: str) -> dict:
 
             else:  # gemini
                 from google.genai import types
+
                 img = Image.open(image_path)
                 response = gemini_client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.5-flash",
                     contents=[VISION_PROMPT, img],
                     config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        response_mime_type="application/json"
-                    )
+                        temperature=0.0, response_mime_type="application/json"
+                    ),
                 )
                 text = response.text.strip()
 
@@ -201,14 +206,27 @@ def analyze_image(image_path: str) -> dict:
         except Exception as exc:
             exc_str = str(exc).lower()
             # If rate limit occurs, wait 30s and try again until it succeeds
-            if "429" in exc_str or "rate" in exc_str or "request" in exc_str or "tpm" in exc_str or "limit" in exc_str:
+            if (
+                "429" in exc_str
+                or "rate" in exc_str
+                or "request" in exc_str
+                or "tpm" in exc_str
+                or "limit" in exc_str
+            ):
                 if attempt >= 3:
-                    print(f"  [Rate Limit] {Path(image_path).name} hit limit - Max retries (3) reached. Skipping.")
-                    return {"skip": True, "skip_reason": "AI rate limit max retries exceeded"}
-                print(f"  [Rate Limit] {Path(image_path).name} hit limit - Thread waiting 30s before retry (Attempt {attempt})...")
+                    print(
+                        f"  [Rate Limit] {Path(image_path).name} hit limit - Max retries (3) reached. Skipping."
+                    )
+                    return {
+                        "skip": True,
+                        "skip_reason": "AI rate limit max retries exceeded",
+                    }
+                print(
+                    f"  [Rate Limit] {Path(image_path).name} hit limit - Thread waiting 30s before retry (Attempt {attempt})..."
+                )
                 time.sleep(30)
                 attempt += 1
                 continue
-            
+
             print(f"  AI error on {image_path}: {exc}")
             return {"skip": True, "skip_reason": f"AI error: {exc}"}

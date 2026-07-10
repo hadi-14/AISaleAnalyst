@@ -37,15 +37,42 @@ else:
 #: Words that indicate a detail/interior/partial shot/accessory — used to penalise
 #: less-descriptive representatives when picking the best item in a group.
 _DETAIL_WORDS = {
-    "interior", "detail", "view", "part", "parts", "accessory",
-    "accessories", "close", "inside", "engine", "motor", "dashboard",
-    "wheel", "seating", "seat", "controls", "plug", "plugs", "latch",
-    "stereo", "speaker", "speakers", "remote", "cable", "cables",
-    "attachment", "attachments", "keyboard", "monitor", "screen",
-    "charger", "battery", "batteries", "headset", "headphones",
+    "interior",
+    "detail",
+    "view",
+    "part",
+    "parts",
+    "accessory",
+    "accessories",
+    "close",
+    "inside",
+    "engine",
+    "motor",
+    "dashboard",
+    "wheel",
+    "seating",
+    "seat",
+    "controls",
+    "plug",
+    "plugs",
+    "latch",
+    "stereo",
+    "speaker",
+    "speakers",
+    "remote",
+    "cable",
+    "cables",
+    "attachment",
+    "attachments",
+    "keyboard",
+    "monitor",
+    "screen",
+    "charger",
+    "battery",
+    "batteries",
+    "headset",
+    "headphones",
 }
-
-
 
 
 def _normalize(s: str) -> str:
@@ -72,11 +99,11 @@ def _get_item_descriptive_score(item: dict) -> float:
     - Names or groups containing interior/detail/part/accessory words (preferring
       the main parent asset as the group representative).
     """
-    ai         = item["ai"]
-    name       = (ai.get("item_name") or "").lower()
-    group      = (ai.get("item_group") or "").lower()
+    ai = item["ai"]
+    name = (ai.get("item_name") or "").lower()
+    group = (ai.get("item_group") or "").lower()
     confidence = float(ai.get("confidence", 0))
-    score      = confidence
+    score = confidence
 
     # Penalise detail / partial-shot / accessory names and groups
     for word in _DETAIL_WORDS:
@@ -97,7 +124,7 @@ def _get_item_descriptive_score(item: dict) -> float:
 def _best_in_group(items: list) -> dict:
     """Return the most descriptive item from a deduplication group, attaching other photos."""
     best = max(items, key=_get_item_descriptive_score)
-    
+
     other_thumbs = []
     for item in items:
         if item is not best:
@@ -106,14 +133,12 @@ def _best_in_group(items: list) -> dict:
             # Also pull in any nested thumbs if this was previously grouped
             if "other_thumbs" in item:
                 other_thumbs.extend(item["other_thumbs"])
-                
+
     if "other_thumbs" not in best:
         best["other_thumbs"] = []
     best["other_thumbs"].extend(other_thumbs)
-    
+
     return best
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +169,7 @@ _AI_BATCH_PROMPT = (
     "No explanation, no markdown."
 )
 
+
 def deduplicate_ai(results: list, batch_size: int = 30) -> list:
     """
     Use the AI model to group items that depict the same physical object,
@@ -157,8 +183,8 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
     def _make_manifest(batch: list, offset: int) -> str:
         lines = []
         for local_i, r in enumerate(batch):
-            ai    = r["ai"]
-            name  = ai.get("item_name", "Unknown")
+            ai = r["ai"]
+            name = ai.get("item_name", "Unknown")
             group = ai.get("item_group", "")
             notes = ai.get("condition_notes", "")
             lines.append(f"{offset + local_i}: {name} [{group}] | Cond: {notes}")
@@ -173,9 +199,11 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
                 for i, img_b64 in enumerate(images):
                     content.append({"type": "text", "text": f"\nItem {offset + i}:"})
                     if img_b64:
-                        content.append({"type": "image_url", "image_url": {"url": img_b64}})
+                        content.append(
+                            {"type": "image_url", "image_url": {"url": img_b64}}
+                        )
             content.append({"type": "text", "text": "\n" + manifest})
-            
+
             response = openai_client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": content}],
@@ -188,11 +216,14 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
                 import base64
                 from io import BytesIO
                 from PIL import Image
+
                 for i, img_b64 in enumerate(images):
                     contents.append(f"\nItem {offset + i}:")
                     if img_b64:
                         try:
-                            b64_data = img_b64.split(",", 1)[1] if "," in img_b64 else img_b64
+                            b64_data = (
+                                img_b64.split(",", 1)[1] if "," in img_b64 else img_b64
+                            )
                             img_bytes = base64.b64decode(b64_data)
                             img = Image.open(BytesIO(img_bytes))
                             contents.append(img)
@@ -201,20 +232,29 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
             contents.append("\n" + manifest)
 
             response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.5-flash",
                 contents=contents,
             )
             return response.text.strip()
 
-    def _call_with_retry(manifest: str, images: list[str] = None, offset: int = 0, max_retries: int = 4) -> str:
+    def _call_with_retry(
+        manifest: str, images: list[str] = None, offset: int = 0, max_retries: int = 4
+    ) -> str:
         delay = 15
         for attempt in range(max_retries):
             try:
                 return _call_ai(manifest, images=images, offset=offset)
             except Exception as exc:
                 exc_str = str(exc).lower()
-                if ("429" in exc_str or "rate" in exc_str or "tpm" in exc_str or "limit" in exc_str) and attempt < max_retries - 1:
-                    print(f"  [AI dedup] Rate limited — waiting {delay}s before retry...")
+                if (
+                    "429" in exc_str
+                    or "rate" in exc_str
+                    or "tpm" in exc_str
+                    or "limit" in exc_str
+                ) and attempt < max_retries - 1:
+                    print(
+                        f"  [AI dedup] Rate limited — waiting {delay}s before retry..."
+                    )
                     time.sleep(delay)
                     continue
                 print(f"  [AI dedup] Batch error: {exc}")
@@ -235,20 +275,23 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
     any_batch_succeeded = False
 
     for batch_num in range(num_batches):
-        start  = batch_num * batch_size
-        end    = min(start + batch_size, len(results))
-        batch  = results[start:end]
+        start = batch_num * batch_size
+        end = min(start + batch_size, len(results))
+        batch = results[start:end]
 
         manifest = _make_manifest(batch, offset=start)
-        
+
         images = []
         if USE_VISION_DEDUP:
             for r in batch:
                 images.append(r.get("thumb", ""))
-                
+
         try:
-            text   = _call_with_retry(manifest, images=images if USE_VISION_DEDUP else None, offset=start)
+            text = _call_with_retry(
+                manifest, images=images if USE_VISION_DEDUP else None, offset=start
+            )
             from .config import fix_and_parse_json
+
             groups = fix_and_parse_json(text)
 
             seen: set[int] = set()
@@ -265,10 +308,14 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
                 seen.add(root_global)
 
             any_batch_succeeded = True
-            print(f"  [AI dedup] Batch {batch_num + 1}/{num_batches} processed ({len(batch)} items)")
+            print(
+                f"  [AI dedup] Batch {batch_num + 1}/{num_batches} processed ({len(batch)} items)"
+            )
 
         except Exception as exc:
-            print(f"  [AI dedup] Batch {batch_num + 1}/{num_batches} failed — items kept as-is")
+            print(
+                f"  [AI dedup] Batch {batch_num + 1}/{num_batches} failed — items kept as-is"
+            )
 
     if not any_batch_succeeded:
         print("  [AI dedup] All batches failed — keeping fuzzy results")
@@ -312,6 +359,6 @@ def deduplicate(results: list) -> list:
     if USE_AI_DEDUP and len(results) > 1:
         print("\n-- Deduplication (AI only) --")
         return deduplicate_ai(results)
-    
+
     print("\n-- Deduplication bypassed (USE_AI_DEDUP=False) --")
     return results
