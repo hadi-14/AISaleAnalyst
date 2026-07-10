@@ -231,12 +231,17 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
             return [], []
 
     # Detect loading skeleton pages which mean eBay didn't return real results
-    if soup.select_one(".srp-skeleton, .skeleton-placeholder, #srp-skeleton"):
-        raise RuntimeError("eBay returned a loading skeleton page")
+    if soup.select_one(".srp-skeleton, .skeleton-placeholder, #srp-skeleton, .strk-loading"):
+        raise ValueError("eBay returned a loading skeleton page")
 
     # Select the main listing cards (supports both traditional and new SSR layouts)
     # Target only children of the main srp-results list to avoid "Similar sponsored items" or "Results matching fewer words"
     cards = soup.select("ul.srp-results > li.s-card, ul.srp-results > li.s-item")
+    
+    # If there's no heading and no cards, the page failed to load fully (stealth block or timeout)
+    if not heading and not cards:
+        page_title = soup.title.string.strip() if soup.title else "No Title"
+        raise ValueError(f"Incomplete page load or stealth block (Title: '{page_title}')")
 
     for card in cards:
         # Title: used for post-filtering parts/accessories
@@ -355,7 +360,12 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, in
         except Exception as exc:
             print(f"  [eBay] Request error: {exc}")
             if attempt < max_retries - 1:
-                time.sleep(5)
+                # If we hit our stealth block ValueError, cycle the session
+                if isinstance(exc, ValueError):
+                    _session = None
+                    _cooldown_until = max(_cooldown_until, time.time() + 15)
+                else:
+                    time.sleep(5)
                 continue
             return [], []
             
