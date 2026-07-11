@@ -377,14 +377,25 @@ def main(max_images_override: int | None = None) -> None:
 
     current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
     
+    # Check if a custom report directory is provided in the environment
+    from core.config import REPORT_OUTPUT_DIR, EMAIL_REPORTS
+    
+    if REPORT_OUTPUT_DIR:
+        out_dir = Path(REPORT_OUTPUT_DIR)
+    else:
+        out_dir = Path(OUTPUT_FOLDER)
+        
     # Ensure output folder exists
-    out_dir = Path(OUTPUT_FOLDER)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     final_output_path = str(out_dir / f"EstateReport_{sale_id}_{current_time}.html")
 
     generate_report(unique_results, final_output_path, skipped_items=skipped_results)
     print(f"\nReport successfully saved to {final_output_path}")
+    
+    if EMAIL_REPORTS:
+        from core.email_sender import send_report_email
+        send_report_email(final_output_path)
     
     # Close the shared curl_cffi session to allow clean exit of the Python process
     close_ebay_session()

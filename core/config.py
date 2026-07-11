@@ -124,6 +124,23 @@ SHIP_MANUAL_HEIGHT: float = _env_float("SHIP_MANUAL_HEIGHT",  8.0)
 SHIP_MANUAL_WEIGHT: float = _env_float("SHIP_MANUAL_WEIGHT",  3.0)
 
 # ---------------------------------------------------------------------------
+# Reporting and Email Config
+# ---------------------------------------------------------------------------
+
+#: Optional absolute path to a custom folder where HTML reports should be saved.
+REPORT_OUTPUT_DIR: str | None = _env_str("REPORT_OUTPUT_DIR", None)
+
+#: Whether to email the completed report after generation.
+EMAIL_REPORTS: bool = _env_bool("EMAIL_REPORTS", False)
+
+#: Comma-separated list of email addresses to receive the report.
+REPORT_EMAIL_TO: str | None = _env_str("REPORT_EMAIL_TO", None)
+
+#: SMTP Credentials for emailing reports
+SMTP_USER: str | None = _env_str("SMTP_USER", "iforgotsouveniers@gmail.com")
+SMTP_PASS: str | None = _env_str("SMTP_PASS", "zwsh zazm cpsi qevl")
+
+# ---------------------------------------------------------------------------
 # AI provider detection & client initialisation
 # ---------------------------------------------------------------------------
 
