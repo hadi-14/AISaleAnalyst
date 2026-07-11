@@ -202,8 +202,17 @@ The vision pipeline converts raw photos into structured JSON payloads like this:
 | `EBAY_DELAY` | `float` | `1.0` | Seconds delay between eBay HTTP requests. |
 | `USE_DEDUP` | `bool` | `true` | Enable/disable AI deduplication pass. |
 | `USE_AI_DEDUP` | `bool` | `true` | Alias for USE_DEDUP (retained for backward compatibility). |
+| `USE_NAME_DEDUP` | `bool` | `true` | Enable post-dedup fuzzy name grouping to catch similar items. |
+| `NAME_DEDUP_THRESHOLD` | `float` | `0.85` | Similarity threshold for fuzzy name matching (0.0-1.0). |
+| `USE_VISUAL_VERIFY` | `bool` | `true` | Verify name-matched candidates visually with AI before merging. |
+| `GENERATE_DUPLICATES_REPORT` | `bool` | `true` | Auto-generate a Duplicates Excel report alongside the HTML report. |
 | `USE_2CAPTCHA` | `bool` | `true` | Enable/disable auto 2captcha solving (set to `false` for manual solve). |
 | `OUTPUT_FOLDER` | `str` | `"./reports"` | Directory to save the dynamically generated HTML reports. |
+| `REPORT_OUTPUT_DIR` | `str` | `None` | Optional absolute path to a custom folder where reports should be saved. |
+| `EMAIL_REPORTS` | `bool` | `false` | Set to true to automatically email the completed report after generation. |
+| `REPORT_EMAIL_TO` | `str` | `None` | Comma-separated list of email addresses to receive the report. |
+| `SMTP_USER` | `str` | `"..."` | Gmail address used for sending reports. |
+| `SMTP_PASS` | `str` | `"..."` | App password for the Gmail account. |
 | `SORT_BY` | `str` | `"roi"` | Primary sorting key (`roi`, `profit`, `median`, `confidence`). |
 | `TOP_N` | `int` | `20` | Maximum top opportunities shown in summary section. |
 | `SHIPPO_API_KEY` | `str` | `""` | Live API key from goshippo.com to fetch real-time carrier rates. |
