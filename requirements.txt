@@ -17,3 +17,6 @@ pillow>=10.0.0
 python-dotenv>=1.0.0
 shippo>=3.9.0
 setuptools>=65.5.0  # Resolves 'distutils' error in Python 3.12+
+
+# Reports
+openpyxl>=3.1.0

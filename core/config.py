@@ -73,6 +73,9 @@ VISION_WORKERS: int = _env_int("VISION_WORKERS", 8)
 #: Number of concurrent worker threads for eBay sold-comps scraping.
 EBAY_WORKERS: int = _env_int("EBAY_WORKERS", 8)
 
+#: Number of concurrent worker threads for financials and shipping rate calculations.
+FINANCIALS_WORKERS: int = _env_int("FINANCIALS_WORKERS", 8)
+
 #: Seconds to sleep after each eBay page load (avoids rate-limiting).
 EBAY_DELAY: float = _env_float("EBAY_DELAY", 1.0)
 
@@ -91,6 +94,19 @@ USE_VISION_DEDUP: bool = _env_bool("USE_VISION_DEDUP", False)
 
 #: When True, enable deduplication. When False, bypass all deduplication passes.
 USE_DEDUP: bool = _env_bool("USE_DEDUP", True)
+
+#: When True, run a post-dedup name-similarity pass to catch items with similar names.
+USE_NAME_DEDUP: bool = _env_bool("USE_NAME_DEDUP", True)
+
+#: SequenceMatcher threshold for fuzzy name matching (0.0–1.0). Higher = stricter.
+NAME_DEDUP_THRESHOLD: float = _env_float("NAME_DEDUP_THRESHOLD", 0.85)
+
+#: When True, visually verify name-matched candidates with AI before merging.
+#: When False, candidates are flagged but never auto-merged (safe mode).
+USE_VISUAL_VERIFY: bool = _env_bool("USE_VISUAL_VERIFY", True)
+
+#: When True, auto-generate a Duplicates Excel report alongside the HTML report.
+GENERATE_DUPLICATES_REPORT: bool = _env_bool("GENERATE_DUPLICATES_REPORT", True)
 
 #: When True, enable automatic CAPTCHA solving via 2captcha. Set to False for manual solve.
 USE_2CAPTCHA: bool = _env_bool("USE_2CAPTCHA", True)

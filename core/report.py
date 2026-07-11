@@ -94,6 +94,18 @@ def build_row(rank: int, item: dict) -> str:
         badges.append('<span style="display:inline-block;background:#fef2f2;color:#b91c1c;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Valuation estimate only (0 comps)</span>')
     elif conf < 70:
         badges.append('<span style="display:inline-block;background:#fffbeb;color:#b45309;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Low confidence match</span>')
+
+    # Post-dedup merge badge — shows how many photos were grouped into this item
+    grouped_count = item.get("_post_dedup_grouped", 0)
+    if grouped_count > 0:
+        badges.append(f'<span style="display:inline-block;background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">📎 Grouped: {grouped_count + 1} photos</span>')
+
+    # Similar item warning badge — flags when a different item has a very similar name
+    similar_to = item.get("_similar_items", [])
+    if similar_to:
+        similar_names = ", ".join(similar_to[:3])  # Show max 3
+        suffix = f" +{len(similar_to) - 3} more" if len(similar_to) > 3 else ""
+        badges.append(f'<span style="display:inline-block;background:#fef9c3;color:#854d0e;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Similar: {similar_names}{suffix}</span>')
         
     badge_html = "".join(badges)
 
@@ -326,15 +338,21 @@ def generate_report(items: list, output_path: str, skipped_items: list = None) -
             print(f"  [report] Warning: missing comps for '{name}' - using N/A")
             item["comps"] = _NA_COMPS.copy()
 
-    # --- Calculate financials with per-item error handling
+    # --- Calculate financials with per-item error handling (parallelized)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from .config import FINANCIALS_WORKERS
+
     good_items: list = []
-    for item in items:
-        try:
-            item["financials"] = calc_financials(item)
-            good_items.append(item)
-        except Exception as exc:
-            name = item.get("ai", {}).get("item_name", "?")
-            print(f"  [report] Skipping '{name}' - financials error: {exc}")
+    with ThreadPoolExecutor(max_workers=FINANCIALS_WORKERS) as executor:
+        future_to_item = {executor.submit(calc_financials, item): item for item in items}
+        for future in as_completed(future_to_item):
+            item = future_to_item[future]
+            try:
+                item["financials"] = future.result()
+                good_items.append(item)
+            except Exception as exc:
+                name = item.get("ai", {}).get("item_name", "?")
+                print(f"  [report] Skipping '{name}' - financials error: {exc}")
 
     items = sorted(good_items, key=get_sort_key, reverse=True)
     total = len(items)

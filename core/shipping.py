@@ -125,6 +125,8 @@ def _is_local_pickup(item_group: str, item_name: str) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
+_shippo_client = None
+
 def get_shipping_rate(
     length: float,
     width: float,
@@ -186,10 +188,13 @@ def get_shipping_rate(
         return _flat_rate_fallback(item_group, item_name, l, w, h, wt)
 
     try:
-        import shippo
-        from shippo.models import components
+        global _shippo_client
+        if _shippo_client is None:
+            import shippo
+            _shippo_client = shippo.Shippo(api_key_header=SHIPPO_API_KEY)
 
-        sdk = shippo.Shippo(api_key_header=SHIPPO_API_KEY)
+        from shippo.models import components
+        sdk = _shippo_client
 
         shipment = sdk.shipments.create(
             components.ShipmentCreateRequest(
