@@ -53,12 +53,133 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP
-from core.deduplication import deduplicate
+from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP, GENERATE_DUPLICATES_REPORT
+from core.deduplication import deduplicate, post_dedup_verify
 from core.ebay import scrape_ebay_comps, close_ebay_session
 from core.report import generate_report
 from core.vision import analyze_image
 from scrapers.ListingExtractor import identifySite
+
+# ---------------------------------------------------------------------------
+# Duplicates Excel report generator
+# ---------------------------------------------------------------------------
+
+
+def _generate_duplicates_xlsx(
+    items: list,
+    merge_log: list[dict],
+    similar_flags: list[dict],
+    output_path: str,
+) -> None:
+    """
+    Generate a Duplicates & Probable Duplicates Excel report.
+
+    Creates four worksheets:
+    - **Exact Duplicates**: Items with identical names (post-dedup).
+    - **Probable Duplicates**: Items with similar but not identical names.
+    - **AI Verified Merges**: Groups that were merged after visual verification.
+    - **Flagged Similar**: Items flagged as similar but kept separate.
+    """
+    from collections import defaultdict
+    import re
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+    except ImportError:
+        print("  [duplicates] openpyxl not installed — skipping Excel report.")
+        print("  [duplicates] Install with: pip install openpyxl")
+        return
+
+    wb = openpyxl.Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
+
+    def _style_header(ws):
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+
+    # --- Sheet 1: Exact Duplicates (items with identical names) ---
+    ws1 = wb.active
+    ws1.title = "Exact Duplicates"
+    ws1.append(["Item", "Occurrences"])
+
+    name_counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        name = item["ai"].get("item_name", "Unknown")
+        name_counts[name] += 1
+
+    for name, count in sorted(name_counts.items(), key=lambda x: x[1], reverse=True):
+        if count >= 2:
+            ws1.append([name, count])
+
+    _style_header(ws1)
+    ws1.column_dimensions["A"].width = 50
+    ws1.column_dimensions["B"].width = 14
+
+    # --- Sheet 2: Probable Duplicates (fuzzy name matches) ---
+    ws2 = wb.create_sheet("Probable Duplicates")
+    ws2.append(["Normalized Group", "Representative Names", "Total Occurrences"])
+
+    from core.deduplication import _deep_normalize, _similarity
+
+    norm_groups: dict[str, list[str]] = defaultdict(list)
+    for item in items:
+        name = item["ai"].get("item_name", "Unknown")
+        norm = _deep_normalize(name)
+        if norm:
+            norm_groups[norm].append(name)
+
+    # Find normalized groups that contain items with different original names
+    for norm_key, names in sorted(norm_groups.items(), key=lambda x: len(x[1]), reverse=True):
+        unique_names = list(set(names))
+        if len(unique_names) >= 2:
+            ws2.append([norm_key, ", ".join(unique_names), len(names)])
+
+    _style_header(ws2)
+    ws2.column_dimensions["A"].width = 30
+    ws2.column_dimensions["B"].width = 70
+    ws2.column_dimensions["C"].width = 18
+
+    # --- Sheet 3: AI Verified Merges ---
+    ws3 = wb.create_sheet("AI Verified Merges")
+    ws3.append(["Merged Items", "Items Merged", "Surviving Item"])
+
+    for entry in merge_log:
+        names = entry.get("names", [])
+        surviving_idx = entry.get("survivor_idx", "?")
+        ws3.append([
+            ", ".join(names),
+            entry.get("merged_count", len(names)),
+            names[0] if names else "?",
+        ])
+
+    _style_header(ws3)
+    ws3.column_dimensions["A"].width = 70
+    ws3.column_dimensions["B"].width = 14
+    ws3.column_dimensions["C"].width = 40
+
+    # --- Sheet 4: Flagged Similar ---
+    ws4 = wb.create_sheet("Flagged Similar")
+    ws4.append(["Similar Items", "Count", "Status"])
+
+    for entry in similar_flags:
+        names = entry.get("names", [])
+        status = "Kept separate"
+        if entry.get("error"):
+            status = f"Error: {entry['error'][:50]}"
+        elif entry.get("mode") == "flag_only":
+            status = "Flag only (visual verify disabled)"
+        ws4.append([", ".join(names), len(names), status])
+
+    _style_header(ws4)
+    ws4.column_dimensions["A"].width = 70
+    ws4.column_dimensions["B"].width = 10
+    ws4.column_dimensions["C"].width = 40
+
+    wb.save(output_path)
+
 
 # ---------------------------------------------------------------------------
 # Main pipeline
@@ -285,6 +406,9 @@ def main(max_images_override: int | None = None) -> None:
         print("Deduplication bypassed (USE_DEDUP=False).")
         unique_results = raw_results
 
+    # --- Step 2b: Post-dedup name-similarity + visual verification
+    unique_results, merge_log, similar_flags = post_dedup_verify(unique_results)
+
     # --- Step 3: eBay comps (Multi-threaded HTTP workers)
     print(f"\nFetching eBay comps for {len(unique_results)} unique items across {EBAY_WORKERS} parallel workers...\n")
     
@@ -392,10 +516,21 @@ def main(max_images_override: int | None = None) -> None:
 
     generate_report(unique_results, final_output_path, skipped_items=skipped_results)
     print(f"\nReport successfully saved to {final_output_path}")
-    
+
+    # --- Step 5: Generate Duplicates Excel report (if enabled)
+    if GENERATE_DUPLICATES_REPORT:
+        try:
+            xlsx_path = str(out_dir / f"Duplicate_and_Probable_Duplicates_EstateReport_{sale_id}.xlsx")
+            _generate_duplicates_xlsx(
+                unique_results, merge_log, similar_flags, xlsx_path,
+            )
+            print(f"Duplicates report saved to {xlsx_path}")
+        except Exception as exc:
+            print(f"Warning: Failed to generate duplicates report: {exc}")
+
     if EMAIL_REPORTS:
         from core.email_sender import send_report_email
-        send_report_email(final_output_path)
+        send_report_email(final_output_path, url=url, items=unique_results)
     
     # Close the shared curl_cffi session to allow clean exit of the Python process
     close_ebay_session()
