@@ -25,9 +25,11 @@
   - **Automated Search Query Generation**: Formulates optimized eBay search queries and fallback queries.
 - **Skipped Photos Audit**: Blurry, structural, or unidentified photos are flagged and preserved for manual review rather than silently dropped.
 
-### 🔍 3. Universal AI Deduplication
+### 🔍 3. 3-Stage Hybrid Deduplication
 Prevents over-counting assets across multi-angle photo sets while strictly preserving distinct individual inventory pieces:
-- **Universal AI Deduplication**: Enforces a product-agnostic "Same Physical Object" rule. Multi-photo asset systems (e.g., a boat with its motor, trailer, and accessories) are collapsed into a single item, while individual items in shared categories (e.g., two distinct vintage wood chairs) remain distinct inventory records based on their visual condition notes.
+- **Stage 1: AI Vision Pass**: Enforces a product-agnostic "Same Physical Object" rule. Groups multiple photos of the same item (even under different lighting or angles).
+- **Stage 2: Name-Similarity Detection**: Aggressively normalizes item names to catch items that sound very similar but were missed in the initial vision pass.
+- **Stage 3: Visual Verification**: Candidates are sent back to the AI for a final visual check to prevent false merges (e.g., keeping two distinct "Wooden Side Tables" in different rooms separate).
 - **Zoomable Image Gallery**: When the AI groups multiple photos together, the final HTML report displays the primary photo alongside the alternate angles in a zoomable mini-gallery.
 
 ### ⚡ 4. Browserless, Super-Fast eBay Comps Scraper
@@ -47,8 +49,10 @@ Prevents over-counting assets across multi-angle photo sets while strictly prese
 - **Net Margin Calculations**: Computes estimated eBay platform fees, net proceeds, expected profit, return on investment (ROI %), and recommended maximum estate buy limits.
 - **Confidence Penalty Logic**: Automatically reduces valuation confidence when fallback comp queries are triggered or when exact model numbers cannot be identified.
 
-### 📄 6. Interactive HTML Reports & Incremental Persistence
-- **Responsive HTML Dashboard**: Clean, modern web report featuring sortable ROI opportunities, interactive eBay verification links, search query audits, and condition badges.
+### 📄 6. Comprehensive Reporting (HTML, Excel & Email)
+- **Responsive HTML Dashboard**: Clean, modern web report featuring sortable ROI opportunities, interactive eBay verification links, search query audits, and visual warning badges (e.g., `📎 Grouped` and `⚠️ Similar` for tracking AI decisions).
+- **Excel Duplicates Debug Report**: Automatically generates a supplementary `.xlsx` file detailing Exact Duplicates, Probable Duplicates, AI Verified Merges, and Flagged Similar items for full transparency.
+- **Automated Email Delivery**: Optionally email the final HTML report, along with key financial summary stats, to a list of stakeholders immediately upon run completion.
 - **Progress Auto-Save**: Saves intermediate analysis state to `vision_progress.json`. Interrupted runs on large sales (100+ images) can be resumed instantly without re-analyzing images or re-spending API tokens.
 
 ---
@@ -149,6 +153,10 @@ Run the main pipeline script:
 ```bash
 python main.py
 ```
+
+**Optional Command-Line Arguments:**
+- `--max-images <N>`: Temporarily override the `MAX_IMAGES` limit from your `.env` for this specific run (e.g., `python main.py --max-images=50`).
+- `--dev`: Enable Development Testing Mode. Automatically swaps to a cheaper/faster AI model (`gpt-4o-mini`), caps item processing to a maximum of 20, and disables email sending to save on API costs and avoid inbox spam.
 
 ### Execution Flow:
 1. **Source Selection**: The app will prompt you for an Estate Sale Listing URL (from EstateSales.net, EstateSales.org, or MaxSold) or you can set `IMAGES_FOLDER` in `.env` to target a local directory.

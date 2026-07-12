@@ -53,7 +53,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP, GENERATE_DUPLICATES_REPORT
+from core.config import IMAGES_FOLDER, MAX_IMAGES, VISION_WORKERS, EBAY_WORKERS, OUTPUT_FOLDER, image_to_base64, USE_DEDUP, GENERATE_DUPLICATES_REPORT, DEV_MODE
 from core.deduplication import deduplicate, post_dedup_verify
 from core.ebay import scrape_ebay_comps, close_ebay_session
 from core.report import generate_report
@@ -201,6 +201,19 @@ def main(max_images_override: int | None = None) -> None:
     """
     from pathlib import Path
 
+    effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
+    if DEV_MODE:
+        effective_max = min(effective_max, 20)
+
+    if DEV_MODE:
+        print("\n" + "="*60)
+        print("⚠️  DEV_MODE IS ACTIVE  ⚠️")
+        print("="*60)
+        print(f"• Items capped to: {effective_max} (DEV_MODE max is 20)")
+        print(f"• Emails disabled")
+        print("• Model swapped to cheaper alternative")
+        print("="*60 + "\n")
+
     # --- Resolve images folder
     images_folder = IMAGES_FOLDER
     url = None
@@ -217,36 +230,20 @@ def main(max_images_override: int | None = None) -> None:
         else:
             raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")
             
-        last_url_file = Path(target_folder) / "last_url.txt"
-        reuse_old = False
+        import shutil
+        if Path(target_folder).exists():
+            print(f"Clearing old data from '{target_folder}'...")
+            shutil.rmtree(target_folder, ignore_errors=True)
+            
+        images_folder = identifySite(url, max_images=effective_max)
         
-        if last_url_file.exists():
-            try:
-                last_url = last_url_file.read_text(encoding="utf-8").strip()
-                if last_url == url:
-                    ans = input(f"Found existing downloaded images for this URL in '{target_folder}'. Reuse them? (y/n) [y]: ").strip().lower()
-                    if ans != 'n':
-                        reuse_old = True
-            except Exception as e:
-                print(f"Error reading last URL info: {e}")
-                
-        if reuse_old:
-            print(f"Reusing existing images in '{target_folder}'. Skipping download.")
-            images_folder = target_folder
-        else:
-            import shutil
-            if Path(target_folder).exists():
-                print(f"Clearing old data from '{target_folder}'...")
-                shutil.rmtree(target_folder, ignore_errors=True)
-                
-            effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
-            images_folder = identifySite(url, max_images=effective_max)
-            # Save the last URL to the directory for future runs
-            try:
-                Path(images_folder).mkdir(parents=True, exist_ok=True)
-                last_url_file.write_text(url, encoding="utf-8")
-            except Exception as e:
-                print(f"Warning: Could not save last URL metadata: {e}")
+        last_url_file = Path(target_folder) / "last_url.txt"
+        # Save the last URL to the directory for future runs
+        try:
+            Path(images_folder).mkdir(parents=True, exist_ok=True)
+            last_url_file.write_text(url, encoding="utf-8")
+        except Exception as e:
+            print(f"Warning: Could not save last URL metadata: {e}")
     else:
         last_url_file = Path(images_folder) / "last_url.txt"
         if last_url_file.exists():
@@ -257,7 +254,7 @@ def main(max_images_override: int | None = None) -> None:
 
     folder      = Path(images_folder)
     extensions  = {".jpg", ".jpeg", ".png", ".webp"}
-    effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
+    
     image_files = sorted(
         f for f in folder.iterdir() if f.suffix.lower() in extensions
     )[:effective_max]
@@ -540,5 +537,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="AISaleAnalyst")
     parser.add_argument("--max-images", type=int, default=None, help="Temporarily override MAX_IMAGES from .env")
+    parser.add_argument("--dev", action="store_true", help="Enable development testing mode (cheaper AI model, capped items, no emails)")
     args = parser.parse_args()
     main(max_images_override=args.max_images)

@@ -25,6 +25,7 @@ from .config import (
     USE_NAME_DEDUP,
     NAME_DEDUP_THRESHOLD,
     USE_VISUAL_VERIFY,
+    OPENAI_MODEL,
     fix_and_parse_json,
 )
 
@@ -215,7 +216,7 @@ def deduplicate_ai(results: list, batch_size: int = 30) -> list:
             content.append({"type": "text", "text": "\n" + manifest})
 
             response = openai_client.chat.completions.create(
-                model="gpt-4o",
+                model=OPENAI_MODEL,
                 messages=[{"role": "user", "content": content}],
                 max_tokens=500,
             )
@@ -525,7 +526,7 @@ def _call_verify_ai(manifest: str, images: list[str] | None = None) -> str:
                                 {"type": "image_url", "image_url": {"url": img_b64}}
                             )
                 response = openai_client.chat.completions.create(
-                    model="gpt-4o",
+                    model=OPENAI_MODEL,
                     messages=[{"role": "user", "content": content}],
                     max_tokens=300,
                 )

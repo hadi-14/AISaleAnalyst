@@ -57,6 +57,14 @@ def _env_bool(key: str, default: bool) -> bool:
 # Tunable constants (loaded from environment / .env with fallback defaults)
 # ---------------------------------------------------------------------------
 
+#: Development testing mode toggle. Swaps to a cheaper/faster model,
+#: caps items to 20, and disables emails to save API costs and inbox spam.
+import sys
+DEV_MODE: bool = "--dev" in sys.argv
+
+#: Which OpenAI model to use for vision/dedup tasks
+OPENAI_MODEL: str = "gpt-4o-mini" if DEV_MODE else "gpt-4o"
+
 #: Path to the folder that contains downloaded listing images.
 #: Set to None to prompt the user at runtime.
 IMAGES_FOLDER: str | None = _env_str("IMAGES_FOLDER", None)
@@ -66,6 +74,8 @@ OUTPUT_FOLDER: str = _env_str("OUTPUT_FOLDER", "./")
 
 #: Maximum number of images to analyse per run.
 MAX_IMAGES: int = _env_int("MAX_IMAGES", 10)
+if DEV_MODE:
+    MAX_IMAGES = min(MAX_IMAGES, 20)
 
 #: Number of concurrent worker threads for AI vision analysis.
 VISION_WORKERS: int = _env_int("VISION_WORKERS", 8)
@@ -148,6 +158,8 @@ REPORT_OUTPUT_DIR: str | None = _env_str("REPORT_OUTPUT_DIR", None)
 
 #: Whether to email the completed report after generation.
 EMAIL_REPORTS: bool = _env_bool("EMAIL_REPORTS", False)
+if DEV_MODE:
+    EMAIL_REPORTS = False
 
 #: Comma-separated list of email addresses to receive the report.
 REPORT_EMAIL_TO: str | None = _env_str("REPORT_EMAIL_TO", None)

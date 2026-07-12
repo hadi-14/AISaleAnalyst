@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .config import AI_PROVIDER, fix_and_parse_json
+from .config import AI_PROVIDER, OPENAI_MODEL, fix_and_parse_json
 
 # Conditionally import whichever client was initialised in config
 if AI_PROVIDER == "openai":
@@ -169,7 +169,7 @@ def analyze_image(image_path: str) -> dict:
                 mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
 
                 response = openai_client.chat.completions.create(
-                    model="gpt-4o",
+                    model=OPENAI_MODEL,
                     messages=[
                         {
                             "role": "user",
