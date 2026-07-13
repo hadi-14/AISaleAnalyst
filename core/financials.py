@@ -13,7 +13,7 @@ get_sort_key(item)
     Extract the numeric value used when sorting the final report.
 """
 
-from .config import SORT_BY
+from .config import MIN_PROFIT_MARGIN_PCT, SORT_BY
 from .shipping import get_shipping_rate
 
 # ---------------------------------------------------------------------------
@@ -106,8 +106,13 @@ def calc_financials(item: dict) -> dict:
     # Net proceeds after fees
     net_after_fees = sell_price - ebay_fee - shipping
 
-    # Recommended maximum purchase price (30 % of net selling price)
-    recommended_max_buy = net_after_fees * 0.30
+    # Recommended maximum purchase price: the most you can pay and still
+    # keep at least MIN_PROFIT_MARGIN_PCT of net proceeds as profit.
+    # When net is zero or negative, the item is unprofitable at any price.
+    if net_after_fees > 0:
+        recommended_max_buy = net_after_fees * (1 - MIN_PROFIT_MARGIN_PCT)
+    else:
+        recommended_max_buy = 0.0
 
     # Actual estate sale buy price (AI estimate or default to 20 % of sell price)
     buy_price = float(ai.get("estate_buy_price", 0) or 0)

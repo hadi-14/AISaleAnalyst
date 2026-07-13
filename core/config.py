@@ -95,6 +95,11 @@ SORT_BY: str = _env_str("SORT_BY", "roi")
 #: Maximum rows shown in the "Top Opportunities" section of the report.
 TOP_N: int = _env_int("TOP_N", 20)
 
+#: Minimum profit margin (as a fraction of net-after-fees) used to calculate
+#: the Recommended Buy Limit.  0.30 = keep at least 30 % of net as profit,
+#: meaning you're willing to spend up to 70 % of net at the estate sale.
+MIN_PROFIT_MARGIN_PCT: float = _env_float("MIN_PROFIT_MARGIN_PCT", 0.30)
+
 
 #: When True, run a second AI-powered deduplication pass after fuzzy matching.
 USE_AI_DEDUP: bool = _env_bool("USE_AI_DEDUP", True)

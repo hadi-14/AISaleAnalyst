@@ -24,6 +24,41 @@ from .financials import calc_financials, get_sort_key, tier
 # ---------------------------------------------------------------------------
 
 
+def _buy_limit_cell(net_after_fees: float, recommended_max_buy: float, buy_price: float) -> str:
+    """
+    Render the inner HTML for the Recommended Buy Limit table cell.
+
+    Handles three display scenarios:
+    * Net after fees ≤ 0  → "Do Not Buy" (item is unprofitable at any price)
+    * Est. buy price > max → dollar amount + warning badge
+    * Normal              → dollar amount + estimated buy price
+    """
+    if net_after_fees <= 0:
+        return (
+            '<div style="font-weight:bold;font-size:13px;color:#b91c1c;">Do Not Buy</div>'
+            '<div style="font-size:10px;color:#b91c1c;margin-top:4px;">Expected Loss</div>'
+        )
+
+    if recommended_max_buy <= 0:
+        return (
+            '<div style="font-weight:bold;font-size:13px;color:#b91c1c;">Do Not Buy</div>'
+            '<div style="font-size:10px;color:#b91c1c;margin-top:4px;">Margin too thin</div>'
+        )
+
+    warning = ""
+    if buy_price > recommended_max_buy:
+        warning = (
+            '<div style="font-size:10px;color:#b91c1c;font-weight:bold;margin-top:4px;">'
+            '⚠️ Est. buy exceeds limit</div>'
+        )
+
+    return (
+        f'<div style="font-weight:bold;font-size:14px;color:#b45309;">${recommended_max_buy:.0f}</div>'
+        f'<div style="font-size:11px;color:#888;margin-top:4px;">Est. Buy: ${buy_price:.0f}</div>'
+        f'{warning}'
+    )
+
+
 def build_row(rank: int, item: dict) -> str:
     """
     Render a single HTML table row for *item*.
@@ -181,8 +216,7 @@ def build_row(rank: int, item: dict) -> str:
         <div style="font-size:12px;font-weight:bold;color:#111;text-align:left;margin-top:4px;border-top:1px dashed #ddd;padding-top:4px;">Net: <span style="float:right;">${net_after_fees:.2f}</span></div>
       </td>
       <td class="center">
-        <div style="font-weight:bold;font-size:14px;color:#b45309;">${recommended_max_buy:.0f}</div>
-        <div style="font-size:11px;color:#888;margin-top:4px;">Est. Buy: ${buy_price:.0f}</div>
+        {_buy_limit_cell(net_after_fees, recommended_max_buy, buy_price)}
       </td>
       <td class="center">
         <div style="font-weight:bold;font-size:14px;color:{profit_color};">${profit:.0f}</div>
