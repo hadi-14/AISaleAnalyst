@@ -2,7 +2,7 @@ import os
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
-from .config import SMTP_USER, SMTP_PASS, REPORT_EMAIL_TO
+from .config import SMTP_USER, SMTP_PASS, REPORT_EMAIL_TO, DEV_MODE
 
 def send_report_email(report_path: str, url: str | None = None, items: list | None = None):
     """
@@ -23,11 +23,16 @@ def send_report_email(report_path: str, url: str | None = None, items: list | No
         return
 
     msg = EmailMessage()
-    msg["Subject"] = f"Estate Analyzer Report - {report_file.name}"
+    subject_prefix = "[TEST DEV_MODE] " if DEV_MODE else ""
+    msg["Subject"] = f"{subject_prefix}Estate Analyzer Report - {report_file.name}"
     msg["From"] = SMTP_USER
     msg["To"] = ", ".join(to_emails)
     
-    body = "Hello,\n\nThe AI analysis has finished! Please find the attached report.\n\n"
+    body = ""
+    if DEV_MODE:
+        body += "⚠️ WARNING: This report was generated using DEV_MODE. The results use a cheaper AI model and the total items analyzed were capped. These results may not be accurate for production valuation.\n\n"
+        
+    body += "Hello,\n\nThe AI analysis has finished! Please find the attached report.\n\n"
     
     if url:
         body += f"Listing URL: {url}\n\n"

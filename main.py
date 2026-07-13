@@ -210,7 +210,7 @@ def main(max_images_override: int | None = None) -> None:
         print("⚠️  DEV_MODE IS ACTIVE  ⚠️")
         print("="*60)
         print(f"• Items capped to: {effective_max} (DEV_MODE max is 20)")
-        print(f"• Emails disabled")
+        print(f"• Emails marked as DEV_MODE test")
         print("• Model swapped to cheaper alternative")
         print("="*60 + "\n")
 

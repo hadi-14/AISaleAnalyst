@@ -158,8 +158,6 @@ REPORT_OUTPUT_DIR: str | None = _env_str("REPORT_OUTPUT_DIR", None)
 
 #: Whether to email the completed report after generation.
 EMAIL_REPORTS: bool = _env_bool("EMAIL_REPORTS", False)
-if DEV_MODE:
-    EMAIL_REPORTS = False
 
 #: Comma-separated list of email addresses to receive the report.
 REPORT_EMAIL_TO: str | None = _env_str("REPORT_EMAIL_TO", None)
