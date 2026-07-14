@@ -62,7 +62,7 @@ Return ONLY a valid JSON object with these exact fields:
   "ai_value_low": 250,
   "ai_value_high": 500,
   "ai_value_notes": "One line reasoning for your estimate",
-  "estate_buy_price": 15,
+  "estate_buy_price": null,
   "item_group": "NOUN-ONLY 1-2 word label for the MAIN object",
   "resale_reasons": "Short keywords/phrase explaining why item holds resale appeal — e.g. Vintage, High demand, Made in USA, Rare collectible",
   "pkg_length_in": 12,
@@ -86,7 +86,7 @@ Rules:
   never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176'). If the item is a specific type of object (like a pendant, mug, or hat) where a broad search would return unrelated merchandise, you MUST wrap the core noun in double-quotes to force eBay to only return exact matches. Example: 'Detroit Tigers "pendant"' or 'Pyrex "casserole dish"'.
 - ebay_exclusion_keywords MUST be an array of up to 5 single-word lowercase keywords representing parts, accessories, manuals, or unrelated items that share similar words. Generate HIGHLY SPECIFIC exclusions based on the item type. For example: if the item is a 'Leather Armchair', exclude ["cover", "cushion", "leg", "slipcover", "jacket"]. If it is a camera, exclude ["lens", "cap", "strap", "manual", "battery"]. Do NOT just copy the examples. Do NOT include words that are part of the item's actual name.
 - ai_value_low and ai_value_high are YOUR expert USD estimate, independent of eBay (set realistic values)
-- estate_buy_price is typical estate sale price for this item (10-30% of resale value)
+- estate_buy_price MUST be calculated dynamically as 10-30% of your ai_value estimate. Do NOT copy examples or default to null unless the item has no value.
 
 Identifying Standalone/Detachable Equipment:
 - If the image focuses on a distinct, detachable, or valuable piece of equipment/accessory (such as a trolling motor, outboard motor, trailer, standalone tool attachment, or generator), identify the item as that specific accessory (e.g., "Minn Kota PowerDrive V2 Trolling Motor"), NOT the larger vehicle/boat it is attached to.

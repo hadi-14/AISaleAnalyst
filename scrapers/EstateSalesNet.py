@@ -129,6 +129,21 @@ def download_images(sale_data: dict, output_dir: str, workers: int = 16, max_ima
         pictures = pictures[:max_images]
     sale_id   = sale.get("saleId", "unknown")
     sale_name = sale.get("name", "")
+    
+    seller_name = sale.get("seller", {}).get("name") if sale.get("seller") else None
+    org_name = sale.get("organizationName", sale.get("org", {}).get("name"))
+    company = seller_name or org_name or "Unknown Company"
+    city = sale.get("postalCodeCityName", "Unknown City")
+    
+    dates_list = sale.get("dates", [])
+    start_date = ""
+    end_date = ""
+    if dates_list:
+        try:
+            start_date = dates_list[0].get("localStartDate", {}).get("_value", "").split("T")[0]
+            end_date = dates_list[-1].get("localEndDate", {}).get("_value", "").split("T")[0]
+        except Exception:
+            pass
 
     if not pictures:
         raise ValueError(f"No pictures found in sale data for sale ID {sale_id}")
@@ -173,11 +188,15 @@ def download_images(sale_data: dict, output_dir: str, workers: int = 16, max_ima
     links_path = os.path.join(output_dir, "links.json")
     with open(links_path, "w", encoding="utf-8") as f:
         json.dump({
-            "sale_id":   sale_id,
-            "sale_name": sale_name,
-            "sale_url":  f"https://www.estatesales.net/sale/{sale_id}",
-            "total":     len(links),
-            "images":    links,
+            "sale_id":    sale_id,
+            "sale_name":  sale_name,
+            "company":    company,
+            "city":       city,
+            "start_date": start_date,
+            "end_date":   end_date,
+            "sale_url":   f"https://www.estatesales.net/sale/{sale_id}",
+            "total":      len(links),
+            "images":     links,
         }, f, indent=2)
     print(f"\nLinks saved : {links_path}")
     print("Starting downloads...\n")

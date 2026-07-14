@@ -486,8 +486,17 @@ def main(max_images_override: int | None = None) -> None:
     import urllib.parse
     from datetime import datetime
 
-    sale_id = "Unknown"
-    if url:
+    sale_info = {}
+    links_file = Path(images_folder) / "links.json"
+    if links_file.exists():
+        try:
+            with open(links_file, "r", encoding="utf-8") as f:
+                sale_info = json.load(f)
+                sale_id = str(sale_info.get("sale_id", "Unknown"))
+        except Exception as e:
+            print(f"Warning: Could not read links.json: {e}")
+
+    if sale_id == "Unknown" and url:
         try:
             path = urllib.parse.urlparse(url.strip()).path
             segments = [s for s in path.split("/") if s.isdigit()]
@@ -495,6 +504,29 @@ def main(max_images_override: int | None = None) -> None:
                 sale_id = segments[-1]
         except Exception:
             pass
+
+    # Build dynamic filename prefix
+    filename_prefix = "EstateReport"
+    if sale_info.get("company") and sale_info.get("city"):
+        import re
+        safe_company = re.sub(r'[^A-Za-z0-9]', '', sale_info["company"])[:25]
+        safe_city = re.sub(r'[^A-Za-z0-9]', '', sale_info["city"])[:20]
+        
+        dates_str = ""
+        if sale_info.get("start_date"):
+            try:
+                from datetime import datetime as dt
+                s_date = dt.strptime(sale_info["start_date"], "%Y-%m-%d")
+                dates_str = f"_{s_date.strftime('%b%d')}"
+                if sale_info.get("end_date") and sale_info["end_date"] != sale_info["start_date"]:
+                    e_date = dt.strptime(sale_info["end_date"], "%Y-%m-%d")
+                    dates_str += f"-{e_date.strftime('%d')}"
+            except Exception:
+                pass
+                
+        parts = [p for p in [safe_company, safe_city] if p]
+        if parts:
+            filename_prefix = "_".join(parts) + dates_str
 
     current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
     
@@ -509,9 +541,9 @@ def main(max_images_override: int | None = None) -> None:
     # Ensure output folder exists
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    final_output_path = str(out_dir / f"EstateReport_{sale_id}_{current_time}.html")
+    final_output_path = str(out_dir / f"{filename_prefix}_ID-{sale_id}_{current_time}.html")
 
-    generate_report(unique_results, final_output_path, skipped_items=skipped_results)
+    generate_report(unique_results, final_output_path, skipped_items=skipped_results, sale_info=sale_info)
     print(f"\nReport successfully saved to {final_output_path}")
 
     # --- Step 5: Generate Duplicates Excel report (if enabled)

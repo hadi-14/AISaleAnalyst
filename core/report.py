@@ -54,7 +54,7 @@ def _buy_limit_cell(net_after_fees: float, recommended_max_buy: float, buy_price
 
     return (
         f'<div style="font-weight:bold;font-size:14px;color:#b45309;">${recommended_max_buy:.0f}</div>'
-        f'<div style="font-size:11px;color:#888;margin-top:4px;">Est. Buy: ${buy_price:.0f}</div>'
+        f'<div style="font-size:11px;color:#888;margin-top:4px;">Est. Sale Price: ${buy_price:.0f}</div>'
         f'{warning}'
     )
 
@@ -288,7 +288,7 @@ _THEAD = """\
   <th>Item Details</th>
   <th class="center" style="width:120px">Expected Resale</th>
   <th class="center" style="width:180px">Fees & Shipping</th>
-  <th class="center" style="width:140px">Recommended Buy Limit</th>
+  <th class="center" style="width:140px">Maximum Buy Price</th>
   <th class="center" style="width:120px">Expected Net Return</th>
   <th class="center" style="width:120px">Match Confidence</th>
   <th class="center" style="width:140px">Verify Comps</th>
@@ -341,7 +341,7 @@ tbody td.center { text-align: center; }
 .footer { padding: 20px 32px; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; margin-top: 32px; text-align: center; }"""
 
 
-def generate_report(items: list, output_path: str, skipped_items: list = None) -> None:
+def generate_report(items: list, output_path: str, skipped_items: list = None, sale_info: dict = None) -> None:
     """
     Calculate financials, sort by the configured key, and write a
     self-contained HTML report.
@@ -359,6 +359,8 @@ def generate_report(items: list, output_path: str, skipped_items: list = None) -
         File path where the HTML report will be written.
     skipped_items:
         List of image dicts that were skipped by the AI vision pass.
+    sale_info:
+        Dictionary of metadata about the sale (company, city, dates, etc).
     """
     date_str = datetime.now().strftime("%B %d, %Y")
     skipped_items = skipped_items or []
@@ -419,6 +421,41 @@ def generate_report(items: list, output_path: str, skipped_items: list = None) -
     else:
         skipped_table = ""
 
+    # --- Header generation
+    sale_name = "ESTATE SALE ANALYSIS REPORT"
+    sub_header_parts = [f"Date: {date_str}", f"Items: {total}", f"Sorted by: {SORT_BY.upper()}", f"AI: {AI_PROVIDER.upper()}"]
+    
+    if sale_info:
+        sale_name = sale_info.get("sale_name") or sale_name
+        company = sale_info.get("company")
+        city = sale_info.get("city")
+        sale_id = sale_info.get("sale_id")
+        
+        dates_str = ""
+        if sale_info.get("start_date"):
+            try:
+                from datetime import datetime as dt
+                s_date = dt.strptime(sale_info["start_date"], "%Y-%m-%d")
+                dates_str = f"{s_date.strftime('%b %d')}"
+                if sale_info.get("end_date") and sale_info.get("end_date") != sale_info["start_date"]:
+                    e_date = dt.strptime(sale_info["end_date"], "%Y-%m-%d")
+                    dates_str += f" - {e_date.strftime('%b %d, %Y')}"
+                else:
+                    dates_str += f", {s_date.year}"
+            except Exception:
+                dates_str = sale_info["start_date"]
+                
+        meta_parts = []
+        if company: meta_parts.append(f"Company: {company}")
+        if city: meta_parts.append(f"City: {city}")
+        if dates_str: meta_parts.append(f"Dates: {dates_str}")
+        if sale_id: meta_parts.append(f"Sale ID: {sale_id}")
+        
+        if meta_parts:
+            sub_header_parts = meta_parts + sub_header_parts
+
+    sub_header = " &nbsp;·&nbsp; ".join(sub_header_parts)
+
     # --- Assemble HTML
     html = f"""\
 <!DOCTYPE html>
@@ -433,8 +470,8 @@ def generate_report(items: list, output_path: str, skipped_items: list = None) -
 </head>
 <body>
 <div class="header">
-  <h1>ESTATE SALE ANALYSIS REPORT</h1>
-  <p>Date: {date_str} &nbsp;·&nbsp; Items: {total} &nbsp;·&nbsp; Sorted by: {SORT_BY.upper()} &nbsp;·&nbsp; AI: {AI_PROVIDER.upper()}</p>
+  <h1>{sale_name}</h1>
+  <p>{sub_header}</p>
 </div>
 <div class="summary">
   <div class="stat"><div class="val">{total}</div><div class="lbl">Total Items</div></div>
