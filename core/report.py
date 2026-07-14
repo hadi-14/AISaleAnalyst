@@ -193,9 +193,9 @@ def build_row(rank: int, item: dict) -> str:
 
     return f"""
     <tr class="item-row">
-      <td class="rank">{rank}</td>
-      <td class="center">{img_tag}</td>
-      <td>
+      <td class="rank" data-label="#">{rank}</td>
+      <td class="center" data-label="Photo">{img_tag}</td>
+      <td data-label="Item Details">
         <div class="item-name" style="font-size:14px; margin-bottom:4px;">{ai.get('item_name', 'Unknown')}</div>
         <div style="margin-top:4px;">{cond_badge}<span class="item-notes" style="color:#666;font-size:12px;">{ai.get('condition_notes', '')}</span></div>
         {resale_html}
@@ -203,32 +203,32 @@ def build_row(rank: int, item: dict) -> str:
         {dims_html}
         <div>{badge_html}</div>
       </td>
-      <td class="center">
+      <td class="center" data-label="Expected Resale">
         <div style="font-weight:bold;font-size:14px;">${sell_price:.0f}</div>
         <div style="font-size:11px;color:#888;margin-top:4px;">eBay: {comps['low']} – {comps['high']}</div>
         <div style="font-size:10px;color:#999;margin-top:2px;">{count_text}</div>
         {ai_val_html}
       </td>
-      <td class="center">
+      <td class="center" data-label="Fees & Shipping">
         <div style="font-size:12px;color:#555;text-align:left;">eBay Fee: <span style="font-weight:bold;float:right;">-${ebay_fee:.2f}</span></div>
         <div style="font-size:12px;color:#555;text-align:left;margin-top:3px;">Shipping: <span style="font-weight:bold;float:right;">-${shipping:.2f}</span></div>
         {shipping_desc}
         <div style="font-size:12px;font-weight:bold;color:#111;text-align:left;margin-top:4px;border-top:1px dashed #ddd;padding-top:4px;">Net: <span style="float:right;">${net_after_fees:.2f}</span></div>
       </td>
-      <td class="center">
+      <td class="center" data-label="Maximum Buy Price">
         {_buy_limit_cell(net_after_fees, recommended_max_buy, buy_price)}
       </td>
-      <td class="center">
+      <td class="center" data-label="Expected Net Return">
         <div style="font-weight:bold;font-size:14px;color:{profit_color};">${profit:.0f}</div>
         <div style="font-weight:bold;font-size:12px;color:#a07000;margin-top:4px;">{roi:.0f}% ROI</div>
       </td>
-      <td class="center">
+      <td class="center" data-label="Match Confidence">
         <div class="conf-wrap">
           <span class="conf-val">{conf}%</span>
           <div class="bar-bg"><div class="bar-fill" style="width:{bar_width}px"></div></div>
         </div>
       </td>
-      <td class="center">
+      <td class="center" data-label="Verify Comps">
         <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
           {link_html}
         </div>
@@ -256,13 +256,13 @@ def build_skipped_row(rank: int, item: dict) -> str:
     
     return f"""
     <tr>
-      <td class="rank">{rank}</td>
-      <td class="center">{img_tag}</td>
-      <td>
+      <td class="rank" data-label="#">{rank}</td>
+      <td class="center" data-label="Photo">{img_tag}</td>
+      <td data-label="File Path">
         <div style="font-weight:bold;font-size:13px;">{file_name}</div>
         <div style="font-size:11px;color:#888;margin-top:2px;">{image_path}</div>
       </td>
-      <td>
+      <td data-label="Reason / AI Assessment">
         <div style="display:inline-block;background:#fef2f2;color:#b91c1c;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;">📷 Photo Skipped</div>
         <div style="font-size:11px;color:#555;margin-top:4px;">{notes}</div>
       </td>
@@ -349,7 +349,41 @@ tbody td.center { text-align: center; }
 .search-container button:hover { background: #e5e7eb; transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
 .search-container button:active { transform: translateY(0); box-shadow: none; }
 .search-count { font-size: 13px; color: #6b7280; white-space: nowrap; }
-.hidden-row { display: none !important; }"""
+.hidden-row { display: none !important; }
+.table-container { overflow-x: auto; width: 100%; -webkit-overflow-scrolling: touch; }
+@media (max-width: 768px) {
+  .summary { flex-wrap: wrap; }
+  .stat { min-width: 50%; border-bottom: 1px solid #e0e0e0; }
+  .stat:last-child { min-width: 100%; border-bottom: none; }
+  .search-container { flex-wrap: wrap; padding: 12px 16px; gap: 10px; }
+  .search-container input { width: 100%; flex: none; }
+  .search-container button { width: 100%; }
+  .header { padding: 16px; }
+  .header h1 { font-size: 18px; }
+  .table-container { overflow-x: visible; }
+  table, thead, tbody, th, td, tr { display: block; }
+  thead tr { position: absolute; top: -9999px; left: -9999px; }
+  tbody tr { margin: 16px; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); background: #fff; overflow: hidden; position: relative; }
+  tbody td { border: none; border-bottom: 1px solid #f3f4f6; position: relative; padding: 12px 12px 12px 120px !important; text-align: left !important; min-height: 40px; }
+  tbody td:last-child { border-bottom: 0; }
+  tbody td:before { position: absolute; top: 12px; left: 12px; width: 96px; padding-right: 10px; white-space: normal; font-size: 10px; font-weight: bold; color: #6b7280; text-transform: uppercase; content: attr(data-label); line-height: 1.2; text-align: left; }
+  
+  /* Rank Badge Styling (Cell 1) */
+  tbody td:nth-child(1) { display: inline-block; padding: 8px 14px !important; background: #1f2937; color: #fff; border-radius: 8px 0 8px 0; position: absolute; top: 0; left: 0; z-index: 10; font-size: 14px; border-bottom: none; min-height: auto; text-align: center !important; }
+  tbody td:nth-child(1):before { display: none; }
+  
+  /* Hero Image Styling (Cell 2) */
+  tbody td:nth-child(2) { padding: 0 !important; border-bottom: none; background: #f9fafb; }
+  tbody td:nth-child(2):before { display: none; }
+  .thumb-gallery { max-width: 100%; margin: 0; justify-content: center; }
+  .img-wrapper.main { width: 100%; height: 220px; }
+  .img-wrapper img { border-radius: 8px 8px 0 0; object-fit: contain; }
+  .img-wrapper.main img:hover { transform: scale(1.05); z-index: 100; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+  .img-wrapper.sec img:hover { transform: scale(4.5); z-index: 1000; box-shadow: 0 15px 35px rgba(0,0,0,0.3); position: relative; }
+  
+  .conf-wrap { align-items: flex-start; }
+  .conf-wrap .bar-bg { margin-top: 4px; }
+}"""
 
 
 def generate_report(items: list, output_path: str, skipped_items: list = None, sale_info: dict = None) -> None:
@@ -427,7 +461,9 @@ def generate_report(items: list, output_path: str, skipped_items: list = None, s
         skipped_rows = "".join(build_skipped_row(i + 1, item) for i, item in enumerate(skipped_items))
         skipped_table = f"""
 <div class="section-title skipped">📷 Skipped / Unidentified Photos ({len(skipped_items)})</div>
+<div class="table-container">
 <table><thead>{_THEAD_SKIPPED}</thead><tbody>{skipped_rows}</tbody></table>
+</div>
 """
     else:
         skipped_table = ""
@@ -493,17 +529,21 @@ def generate_report(items: list, output_path: str, skipped_items: list = None, s
 </div>
 
 <div class="search-container">
-  <input type="text" id="searchInput" placeholder="Search items by title, description, category, brand, or recommendation..." onkeyup="filterItems()">
+  <input type="text" id="searchInput" placeholder="Search items by title, description, category, brand, or recommendation..." oninput="filterItems()">
   <button id="clearSearchBtn" onclick="clearSearch()">Clear Search</button>
   <div id="searchCount" class="search-count">{total} of {total} items shown</div>
 </div>
 
 <div class="section-title gold">⭐ Top {TOP_N} Flip Opportunities — Ranked by {SORT_BY.upper()}</div>
 <div class="sort-note">Buy price estimated at typical estate sale rate (10–30% of resale value)</div>
+<div class="table-container">
 <table id="topTable"><thead>{_THEAD}</thead><tbody>{top_rows}</tbody></table>
+</div>
 
 <div class="section-title">Full Inventory — All {total} Items</div>
+<div class="table-container">
 <table id="fullTable"><thead>{_THEAD}</thead><tbody>{all_rows}</tbody></table>
+</div>
 
 {skipped_table}
 
