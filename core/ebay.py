@@ -114,36 +114,42 @@ _STATIC_NEGATIVE_WORDS: frozenset[str] = frozenset({
     "toy", "toys", "model", "models", "miniature", "brochure", "brochures",
     "catalog", "catalogs", "instructions", "latch", "latches", "plugs", "plug",
     "wheel", "wheels", "tire", "tires", "trailer", "trailers",
-    "keychain", "keychains", "poster", "posters", "print", "prints",
+    "keychain", "keychains", "poster", "posters",
     "replacement", "repair", "service", "guide", "guides", "handbook",
     "pdf", "download", "dvd", "cd", "software", "copy", "reprint",
     "cabling", "cable", "cables", "cord", "cords", "charger", "chargers",
-    "case", "cases", "bag", "bags", "sleeve", "sleeves", "strap", "straps",
+    "bag", "bags", "sleeve", "sleeves", "strap", "straps",
     "battery", "batteries", "bulb", "bulbs", "remote", "remotes",
-    "stand", "stands", "mount", "mounts", "bracket", "brackets",
+    "bracket", "brackets",
     "screw", "screws", "bolt", "bolts", "nut", "nuts", "adapter", "adapters",
     "diagram", "harness", "harnesses", "switch", "switches", "sensor", "sensors",
     "gasket", "gaskets", "seal", "seals", "filter", "filters",
     "windshield", "windshields", "panel", "panels", "curtain", "curtains",
     "seat", "seats", "cushion", "cushions", "steering", "motor", "motors",
     "engine", "engines", "propeller", "propellers", "impeller", "impellers",
-    "carburetor", "carburetors", "pump", "pumps", "wiring", "light", "lights",
-    "hardware", "frame", "frames", "glass", "canvas", "canvases", "bimini",
-    "top", "tops", "hatch", "hatches", "lock", "locks", "key", "keys",
+    "carburetor", "carburetors", "pump", "pumps", "wiring",
+    "hardware", "bimini", "hatch", "hatches",
     "pedestal", "pedestals", "blade", "blades", "knife", "knives",
     "belt", "belts", "pulley", "pulleys", "clutch", "clutches",
-    "spark", "sparkplug", "sparkplugs", "screen", "screens", "carb",
-    "carbs", "bearing", "bearings", "hose", "hoses", "oil", "gas",
-    "cap", "caps", "spring", "springs", "shaft", "shafts", "pin", "pins",
-    "box", "boxes", "empty", "packaging", "package", "packages",
+    "spark", "sparkplug", "sparkplugs", "carb", "carbs",
+    "bearing", "bearings", "hose", "hoses",
+    "spring", "springs", "shaft", "shafts",
+    "empty", "packaging", "package", "packages",
+    # Removed: "canvas", "canvases", "print", "prints", "frame", "frames",
+    # "glass", "box", "boxes", "light", "lights", "stand", "stands",
+    # "mount", "mounts", "key", "keys", "lock", "locks", "pin", "pins",
+    # "cap", "caps", "top", "tops", "case", "cases", "screen", "screens",
+    # "oil", "gas" — common whole-item nouns in art/glass/furniture/
+    # lighting/jewelry titles, was causing legit comps to be discarded.
 })
 
 
-def should_filter_by_title(title: str, query: str) -> bool:
+def should_filter_by_title(title: str, query: str, inclusion_keywords: list[str] | None = None) -> bool:
     """
     Return True if *title* contains a known parts/accessories word that
     does not appear in *query* (so we don't accidentally filter e.g. a
-    "boat motor" search when the word "motor" appears in the query).
+    "boat motor" search when the word "motor" appears in the query) or if
+    the title fails core query token overlap requirements.
 
     Parameters
     ----------
@@ -173,7 +179,7 @@ def should_filter_by_title(title: str, query: str) -> bool:
     query_words = set(re.findall(r"\b\w+\b", query.lower()))
 
     # Positive Match Filter: Require at least some core query nouns to appear in title
-    stop_words = {"vintage", "antique", "retro", "mid-century", "midcentury", "set", "the", "a", "an", "and", "or", "with", "of", "in", "on", "for"}
+    stop_words = {"vintage", "antique", "retro", "mid-century", "midcentury", "set", "the", "a", "an", "and", "or", "with", "of", "in", "on", "for", "rare", "old", "used", "original"}
     core_query_words = query_words - stop_words
     
     if core_query_words:
@@ -198,9 +204,9 @@ def should_filter_by_title(title: str, query: str) -> bool:
 # HTML scraping helpers (BeautifulSoup)
 # ---------------------------------------------------------------------------
 
-def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str]]:
+def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str], int]:
     """
-    Parse sold prices and listing links from an eBay search results HTML page.
+    Parse sold prices, listing links, and total result count from an eBay search results HTML page.
 
     Targets the ``su-card-container__attributes`` card layout used by eBay's
     current SSR search pages.  Falls back to a regex price sweep if no cards
@@ -215,36 +221,53 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
 
     Returns
     -------
-    tuple[list[float], list[str]]
-        ``(prices, comp_links)`` -- prices in page order, and up to 3 item URLs.
+    tuple[list[float], list[str], int]
+        ``(prices, comp_links, total_count)`` -- prices in page order, up to 3 item URLs, and total matches.
     """
     soup = BeautifulSoup(html, "html.parser")
 
     prices:     list[float] = []
     comp_links: list[str]   = []
+    total_count: int        = 0
 
-    # If eBay explicitly states 0 results (but shows "results matching fewer words"), abort early if we can detect it.
-    heading = soup.select_one("h1.srp-controls__count-heading, h1.rs-controls__count-heading, h1.s-title-count")
+    # Check overall SRP header & controls for 0 exact match notices
+    heading = soup.select_one("h1.srp-controls__count-heading, h1.rs-controls__count-heading, h1.s-title-count, .srp-controls__count-heading, .srp-river-answer--REWRITE_START, .srp-save-search-options, .s-answer-region")
     if heading:
         heading_text = heading.get_text(strip=True).lower()
-        if heading_text.startswith("0 result") or "no exact matches" in heading_text:
-            return [], []
+        if "0 result" in heading_text or "no exact matches" in heading_text or "fewer words" in heading_text:
+            return [], [], 0
+        m_count = re.search(r"([\d,]+)\+?\s+result", heading_text)
+        if m_count:
+            try:
+                total_count = int(m_count.group(1).replace(",", ""))
+            except ValueError:
+                pass
 
     # Detect loading skeleton pages which mean eBay didn't return real results
     if soup.select_one(".srp-skeleton, .skeleton-placeholder, #srp-skeleton, .strk-loading"):
         raise ValueError("eBay returned a loading skeleton page")
 
-    # Select the main listing cards (supports both traditional and new SSR layouts)
-    # Target only children of the main srp-results list to avoid "Similar sponsored items" or "Results matching fewer words"
-    cards = soup.select("ul.srp-results > li.s-card, ul.srp-results > li.s-item")
+    # Select all direct list items under srp-results to detect rewrite/fewer-words answer banners
+    items = soup.select("ul.srp-results > li")
     
-    # If there's no heading and no cards, the page failed to load fully (stealth block or timeout)
-    if not heading and not cards:
+    # If there's no heading and no items, the page failed to load fully (stealth block or timeout)
+    if not heading and not items:
         page_title = soup.title.string.strip() if soup.title else "No Title"
         raise ValueError(f"Incomplete page load or stealth block (Title: '{page_title}')")
 
-    for card in cards:
-        # Title: used for post-filtering parts/accessories
+    for item in items:
+        item_class = " ".join(item.get("class", []))
+        item_text = item.get_text(strip=True).lower()
+        
+        # Stop iteration if we reach eBay's "Results matching fewer words" or "No exact matches" banner
+        if "srp-river-answer" in item_class or "results matching fewer words" in item_text or "no exact matches" in item_text:
+            break
+
+        if not ("s-card" in item_class or "s-item" in item_class):
+            continue
+
+        card = item
+        # Title: used for post-filtering parts/accessories and title relevance
         title_el = card.select_one("a.s-card__link, [class*='s-card__link'], h3.s-item__title, .s-item__title")
         title = title_el.get_text(strip=True) if title_el else ""
         if title and should_filter_by_title(title, query, inclusion_keywords=inclusion_keywords):
@@ -281,13 +304,16 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
                 if val > 0:
                     prices.append(val)
 
-    return prices, comp_links
+    if total_count == 0:
+        total_count = len(prices)
+
+    return prices, comp_links, total_count
 
 import threading
 import time
 import random
 
-def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str]]:
+def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str], int]:
     """
     Fetch *search_url* via the shared curl_cffi session and extract sold prices.
 
@@ -300,8 +326,8 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, in
 
     Returns
     -------
-    tuple[list[float], list[str]]
-        ``(prices, comp_links)``
+    tuple[list[float], list[str], int]
+        ``(prices, comp_links, total_count)``
     """
     global _session, _cooldown_until
     for attempt in range(max_retries):
@@ -347,14 +373,14 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, in
                     print("  [eBay] Max retries reached. Raising exception to prevent fallback cascade.")
                     raise RuntimeError("eBay Anti-Bot Blocked")
             
-            prices, links = _parse_prices_from_html(resp.text, query, inclusion_keywords=inclusion_keywords)
+            prices, links, total_cnt = _parse_prices_from_html(resp.text, query, inclusion_keywords=inclusion_keywords)
             
             # Save HTML if 0 results, to help diagnose if it's a DOM change or block
             if not prices:
                 with open("ebay_debug_0_results.html", "w", encoding="utf-8") as f:
                     f.write(resp.text)
                     
-            return prices, links
+            return prices, links, total_cnt
         except RuntimeError:
             raise # Re-raise the block exception to abort fallbacks
         except Exception as exc:
@@ -367,9 +393,9 @@ def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, in
                 else:
                     time.sleep(5)
                 continue
-            return [], []
+            return [], [], 0
             
-    return [], []
+    return [], [], 0
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +461,7 @@ def get_condition_param(condition: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 #: eBay sold/completed filter suffix appended to every search URL.
-_EBAY_SUFFIX = "&LH_Complete=1&LH_Sold=1&_sop=13&LH_PrefLoc=1"
+_EBAY_SUFFIX = "&LH_Complete=1&LH_Sold=1&_sop=13&LH_PrefLoc=1&_ipg=240"
 
 
 def scrape_ebay_comps(
@@ -516,34 +542,57 @@ def scrape_ebay_comps(
         best_prices: list[float] = []
         best_links: list[str]   = []
         best_url: str         = attempts[0]
+        best_total_count: int = 0
 
         for i, (url, label) in enumerate(zip(attempts, labels)):
             if i < 3:
                 # Top strict attempts
-                prices, comp_links = _fetch_prices_from_url(url, cleaned_query, inclusion_keywords=inclusion_keywords)
+                prices, comp_links, total_cnt = _fetch_prices_from_url(url, cleaned_query, inclusion_keywords=inclusion_keywords)
             else:
                 # Looser bare attempt
-                prices, comp_links = _fetch_prices_from_url(url, fallback_query or cleaned_query, inclusion_keywords=None)
+                prices, comp_links, total_cnt = _fetch_prices_from_url(url, fallback_query or cleaned_query, inclusion_keywords=None)
             
-            if len(prices) > len(best_prices):
+            if prices:
                 best_prices = prices
                 best_links = comp_links
                 best_url = url
+                best_total_count = total_cnt
 
-            if len(prices) >= 3:
-                if label != "exclusions+floor+condition":
-                    print(f"  [{item_name}] fallback -> {label}")
-                break
+                # Prioritize strict attempts: if strict attempt 1 or 2 returns results, keep them!
+                # Do NOT cascade down to loose bare queries that overwrite accurate results with broad generic junk.
+                if len(prices) >= 1 and i <= 1:
+                    if label != "exclusions+floor+condition":
+                        print(f"  [{item_name}] fallback -> {label}")
+                    break
+                if len(prices) >= 3:
+                    if label != "exclusions+floor+condition":
+                        print(f"  [{item_name}] fallback -> {label}")
+                    break
             print(f"  [{item_name}] {len(prices)} results with {label} - trying next")
 
         prices = best_prices
         comp_links = best_links
         used_url = best_url
+        final_sold_count = max(len(prices), best_total_count)
 
         # Extract exact query string used from the URL
         import urllib.parse
         parsed = urllib.parse.urlparse(used_url)
         exact_query = urllib.parse.parse_qs(parsed.query).get('_nkw', [cleaned_query])[0]
+
+        # --- Active Listings Scraping ---
+        active_low = "N/A"
+        active_high = "N/A"
+        active_count = 0
+        try:
+            active_url = used_url.replace("&LH_Complete=1&LH_Sold=1", "")
+            active_prices, _, active_tot_cnt = _fetch_prices_from_url(active_url, cleaned_query, max_retries=1, inclusion_keywords=inclusion_keywords)
+            if active_prices:
+                active_count = max(len(active_prices), active_tot_cnt)
+                active_low = f"${min(active_prices):.0f}"
+                active_high = f"${max(active_prices):.0f}"
+        except Exception:
+            pass
 
         if not prices:
             if fallback_query:
@@ -577,7 +626,8 @@ def scrape_ebay_comps(
 
             return {
                 "low": "N/A", "mean": "N/A", "high": "N/A",
-                "count": 0, "link": used_url, "links": [],
+                "count": 0, "active_low": active_low, "active_high": active_high, "active_count": active_count,
+                "link": used_url, "links": [],
                 "fallback_used": False, "query_used": exact_query,
             }
 
@@ -591,7 +641,10 @@ def scrape_ebay_comps(
             "low":          f"${low_val:.0f}",
             "mean":         f"${mean_val:.0f}",
             "high":         f"${high_val:.0f}",
-            "count":        len(prices),
+            "count":        final_sold_count,
+            "active_low":   active_low,
+            "active_high":  active_high,
+            "active_count": active_count,
             "link":         used_url,
             "links":        comp_links,
             "fallback_used": False,

@@ -24,19 +24,17 @@ from .financials import calc_financials, get_sort_key, tier
 # ---------------------------------------------------------------------------
 
 
-def _buy_limit_cell(net_after_fees: float, recommended_max_buy: float, buy_price: float) -> str:
-    """
-    Render the inner HTML for the Recommended Buy Limit table cell.
+def _buy_limit_cell(recommended_max_buy: float, buy_price: float, profit: float, has_buy_price: bool = True, price_tag_visible: bool = False) -> str:
+    if not has_buy_price:
+        return (
+            '<div style="font-weight:bold;font-size:13px;color:#d97706;">Manual Research</div>'
+            '<div style="font-size:10px;color:#6b7280;margin-top:4px;">No confirmed price tag/comp</div>'
+        )
 
-    Handles three display scenarios:
-    * Net after fees ≤ 0  → "Do Not Buy" (item is unprofitable at any price)
-    * Est. buy price > max → dollar amount + warning badge
-    * Normal              → dollar amount + estimated buy price
-    """
-    if net_after_fees <= 0:
+    if profit <= 0:
         return (
             '<div style="font-weight:bold;font-size:13px;color:#b91c1c;">Do Not Buy</div>'
-            '<div style="font-size:10px;color:#b91c1c;margin-top:4px;">Expected Loss</div>'
+            '<div style="font-size:10px;color:#b91c1c;margin-top:4px;">Expected Gross Loss</div>'
         )
 
     if recommended_max_buy <= 0:
@@ -49,12 +47,13 @@ def _buy_limit_cell(net_after_fees: float, recommended_max_buy: float, buy_price
     if buy_price > recommended_max_buy:
         warning = (
             '<div style="font-size:10px;color:#b91c1c;font-weight:bold;margin-top:4px;">'
-            '⚠️ Est. buy exceeds limit</div>'
+            '⚠️ Price exceeds limit</div>'
         )
 
+    tag_label = "Observed Tag" if price_tag_visible else "Est. Full Value (100%)"
     return (
         f'<div style="font-weight:bold;font-size:14px;color:#b45309;">${recommended_max_buy:.0f}</div>'
-        f'<div style="font-size:11px;color:#888;margin-top:4px;">Est. Sale Price: ${buy_price:.0f}</div>'
+        f'<div style="font-size:11px;color:#6b7280;margin-top:4px;">{tag_label}: ${buy_price:.0f}</div>'
         f'{warning}'
     )
 
@@ -80,14 +79,13 @@ def build_row(rank: int, item: dict) -> str:
     comps     = item["comps"]
     fin       = item["financials"]
     
-    sell_price          = fin["sell_price"]
-    ebay_fee            = fin["ebay_fee"]
-    shipping            = fin["shipping"]
-    net_after_fees      = fin["net_after_fees"]
-    recommended_max_buy = fin["recommended_max_buy"]
-    buy_price           = fin["buy_price"]
-    profit              = fin["profit"]
-    roi                 = fin["roi"]
+    sell_price          = fin.get("sell_price", 0)
+    recommended_max_buy = fin.get("recommended_max_buy", 0)
+    buy_price           = fin.get("buy_price", 0)
+    has_buy_price       = fin.get("has_buy_price", True)
+    price_tag_visible   = fin.get("price_tag_visible", False)
+    profit              = fin.get("projected_gross_return", 0)
+    roi                 = fin.get("gross_roi", 0)
     
     conf      = fin.get("adjusted_confidence", ai.get("confidence", 0))
     bar_width = int(conf * 0.6)           # max bar ≈ 60 px at 100 %
@@ -112,6 +110,10 @@ def build_row(rank: int, item: dict) -> str:
     # Badges for match status
     badges = []
     
+    # Tag badge
+    if price_tag_visible:
+        badges.append(f'<span style="display:inline-block;background:#dcfce7;color:#15803d;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">🏷️ Price Tag Observed (${buy_price:.0f})</span>')
+
     # Multi-item flag
     if ai.get("multi_item_detected"):
         badges.append('<span style="display:inline-block;background:#fce7f3;color:#be185d;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">📦 Multi-Item Photo</span>')
@@ -135,12 +137,16 @@ def build_row(rank: int, item: dict) -> str:
     if grouped_count > 0:
         badges.append(f'<span style="display:inline-block;background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">📎 Grouped: {grouped_count + 1} photos</span>')
 
+    # Furniture check
+    item_group_lower = (ai.get("item_group") or "").lower()
+    furniture_keywords = ["sofa", "chair", "table", "dresser", "bed", "cabinet", "desk", "buffet", "sideboard", "hutch", "nightstand", "wardrobe"]
+    if any(k in item_group_lower for k in furniture_keywords):
+        badges.append('<span style="display:inline-block;background:#fef3c7;color:#d97706;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">🛋️ Local pickup only. Value approximate—manual inspection recommended</span>')
+
     # Similar item warning badge — flags when a different item has a very similar name
     similar_to = item.get("_similar_items", [])
     if similar_to:
-        similar_names = ", ".join(similar_to[:3])  # Show max 3
-        suffix = f" +{len(similar_to) - 3} more" if len(similar_to) > 3 else ""
-        badges.append(f'<span style="display:inline-block;background:#fef9c3;color:#854d0e;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Similar: {similar_names}{suffix}</span>')
+        badges.append('<span style="display:inline-block;background:#fef9c3;color:#854d0e;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-top:6px;margin-right:6px;">⚠️ Possible duplicate—confirm whether this is a separate item</span>')
         
     badge_html = "".join(badges)
 
@@ -156,7 +162,7 @@ def build_row(rank: int, item: dict) -> str:
     count_text = f"Based on {comps['count']} sold listings" if comps['count'] > 0 else "No comps found"
 
     # Color class for profit
-    profit_color = "#1c7a3a" if profit >= 0 else "#b91c1c"
+    profit_color = "#1c7a3a" if (profit >= 0 and has_buy_price) else "#b91c1c"
 
     # Extract resale reasons & search query
     resale_reasons = ai.get("resale_reasons") or ""
@@ -175,21 +181,14 @@ def build_row(rank: int, item: dict) -> str:
         if pkg_l > 0 or pkg_w > 0 or pkg_h > 0 or pkg_wt > 0:
             dims_html = f'<div style="font-size:11px;color:#4b5563;margin-top:4px;">📦 Package: <span style="font-family:monospace;background:#f3f4f6;padding:2px 6px;border-radius:3px;">{pkg_l}x{pkg_w}x{pkg_h} in | {pkg_wt} lbs</span></div>'
 
-    shipping_carrier = fin.get("shipping_carrier", "Estimated")
-    shipping_service = fin.get("shipping_service", "")
-    shipping_est_days = fin.get("shipping_est_days")
-    
-    # Format a nice sub-label under shipping
-    shipping_desc = ""
-    if shipping_carrier and shipping_service:
-        days_str = f" ({shipping_est_days}d)" if shipping_est_days else ""
-        shipping_desc = f'<div style="font-size:10px;color:#6b7280;text-align:left;margin-top:2px;">{shipping_carrier} {shipping_service}{days_str}</div>'
-
     ai_low = ai.get('ai_value_low')
     ai_high = ai.get('ai_value_high')
     ai_val_html = ""
     if ai_low is not None and ai_high is not None:
         ai_val_html = f'<div style="font-size:11px;color:#4b5563;margin-top:6px;padding-top:4px;border-top:1px dashed #e5e7eb;" title="Raw estimate from the vision AI">AI Est: <span style="font-weight:bold;">${ai_low} – ${ai_high}</span></div>'
+
+    gross_return_display = f"${profit:.0f}" if has_buy_price else "—"
+    gross_roi_display = f"{roi:.0f}% Gross ROI" if has_buy_price else "Manual Research"
 
     return f"""
     <tr class="item-row">
@@ -203,28 +202,26 @@ def build_row(rank: int, item: dict) -> str:
         {dims_html}
         <div>{badge_html}</div>
       </td>
-      <td class="center" data-label="Expected Resale">
+      <td class="center" data-label="Estimated Resale Value">
         <div style="font-weight:bold;font-size:14px;">${sell_price:.0f}</div>
         <div style="font-size:11px;color:#888;margin-top:4px;">eBay: {comps['low']} – {comps['high']}</div>
-        <div style="font-size:10px;color:#999;margin-top:2px;">{count_text}</div>
         {ai_val_html}
       </td>
-      <td class="center" data-label="Fees & Shipping">
-        <div style="font-size:12px;color:#555;text-align:left;">eBay Fee: <span style="font-weight:bold;float:right;">-${ebay_fee:.2f}</span></div>
-        <div style="font-size:12px;color:#555;text-align:left;margin-top:3px;">Shipping: <span style="font-weight:bold;float:right;">-${shipping:.2f}</span></div>
-        {shipping_desc}
-        <div style="font-size:12px;font-weight:bold;color:#111;text-align:left;margin-top:4px;border-top:1px dashed #ddd;padding-top:4px;">Net: <span style="float:right;">${net_after_fees:.2f}</span></div>
+      <td class="center" data-label="Market Context">
+        <div style="font-size:12px;color:#555;text-align:left;">Sold: <span style="font-weight:bold;float:right;">{comps['count']} items</span></div>
+        <div style="font-size:12px;color:#555;text-align:left;margin-top:3px;">Active: <span style="font-weight:bold;float:right;">{comps.get('active_count', 0)} items</span></div>
+        <div style="font-size:10px;color:#6b7280;text-align:left;margin-top:2px;">Active Ask: {comps.get('active_low', 'N/A')} - {comps.get('active_high', 'N/A')}</div>
       </td>
-      <td class="center" data-label="Maximum Buy Price">
-        {_buy_limit_cell(net_after_fees, recommended_max_buy, buy_price)}
+      <td class="center" data-label="Max Recommended Purchase">
+        {_buy_limit_cell(recommended_max_buy, buy_price, profit, has_buy_price, price_tag_visible)}
       </td>
-      <td class="center" data-label="Expected Net Return">
-        <div style="font-weight:bold;font-size:14px;color:{profit_color};">${profit:.0f}</div>
-        <div style="font-weight:bold;font-size:12px;color:#a07000;margin-top:4px;">{roi:.0f}% ROI</div>
+      <td class="center" data-label="Projected Gross Return">
+        <div style="font-weight:bold;font-size:14px;color:{profit_color};">{gross_return_display}</div>
+        <div style="font-weight:bold;font-size:12px;color:#a07000;margin-top:4px;">{gross_roi_display}</div>
       </td>
       <td class="center" data-label="Match Confidence">
         <div class="conf-wrap">
-          <span class="conf-val">{conf}%</span>
+          <span class="conf-val">{ 'High' if conf >= 80 else 'Medium' if conf >= 50 else 'Low' } ({conf}%)</span>
           <div class="bar-bg"><div class="bar-fill" style="width:{bar_width}px"></div></div>
         </div>
       </td>
@@ -286,10 +283,10 @@ _THEAD = """\
   <th class="center" style="width:40px">#</th>
   <th class="center" style="width:100px">Photo</th>
   <th>Item Details</th>
-  <th class="center" style="width:120px">Expected Resale</th>
-  <th class="center" style="width:180px">Fees & Shipping</th>
-  <th class="center" style="width:140px">Maximum Buy Price</th>
-  <th class="center" style="width:120px">Expected Net Return</th>
+  <th class="center" style="width:120px">Estimated Resale Value</th>
+  <th class="center" style="width:180px">Market Context</th>
+  <th class="center" style="width:140px">Max Recommended Purchase</th>
+  <th class="center" style="width:120px">Projected Gross Return</th>
   <th class="center" style="width:120px">Match Confidence</th>
   <th class="center" style="width:140px">Verify Comps</th>
 </tr>"""
@@ -438,10 +435,24 @@ def generate_report(items: list, output_path: str, skipped_items: list = None, s
     items = sorted(good_items, key=get_sort_key, reverse=True)
     total = len(items)
 
-    high_count   = sum(1 for i in items if tier(i["financials"]["roi"])[0] == "high")
-    med_count    = sum(1 for i in items if tier(i["financials"]["roi"])[0] == "med")
-    low_count    = sum(1 for i in items if tier(i["financials"]["roi"])[0] == "low")
-    total_profit = sum(i["financials"]["profit"] for i in items)
+    recommended_items = [
+        i for i in items
+        if i.get("financials", {}).get("has_buy_price")
+        and i.get("financials", {}).get("recommended_max_buy", 0) > 0 
+        and i.get("financials", {}).get("buy_price", 0) <= i.get("financials", {}).get("recommended_max_buy", 0)
+        and i.get("financials", {}).get("projected_gross_return", 0) > 0
+    ]
+    num_recommended = len(recommended_items)
+    gross_return_recommended = sum(i.get("financials", {}).get("projected_gross_return", 0) for i in recommended_items)
+    capital_required = sum(i.get("financials", {}).get("buy_price", 0) for i in recommended_items)
+    
+    high_conf_items = [i for i in recommended_items if i.get("financials", {}).get("adjusted_confidence", 0) >= 80]
+    gross_return_high_conf = sum(i.get("financials", {}).get("projected_gross_return", 0) for i in high_conf_items)
+    
+    manual_research_count = sum(
+        1 for i in items 
+        if not i.get("financials", {}).get("has_buy_price") or i.get("comps", {}).get("count", 0) == 0
+    )
 
     # --- Row rendering with per-row error handling
     def _safe_row(rank: int, item: dict) -> str:
@@ -521,11 +532,11 @@ def generate_report(items: list, output_path: str, skipped_items: list = None, s
   <p>{sub_header}</p>
 </div>
 <div class="summary">
-  <div class="stat"><div class="val">{total}</div><div class="lbl">Total Items</div></div>
-  <div class="stat"><div class="val">{high_count}</div><div class="lbl">High ROI</div></div>
-  <div class="stat"><div class="val">{med_count}</div><div class="lbl">Medium ROI</div></div>
-  <div class="stat"><div class="val">{low_count}</div><div class="lbl">Low ROI</div></div>
-  <div class="stat"><div class="val">${total_profit:.0f}</div><div class="lbl">Est. Total Profit</div></div>
+  <div class="stat"><div class="val">{num_recommended}</div><div class="lbl">Recommended Purchases</div></div>
+  <div class="stat"><div class="val">${capital_required:.0f}</div><div class="lbl">Est. Capital Required</div></div>
+  <div class="stat"><div class="val">${gross_return_recommended:.0f}</div><div class="lbl">Projected Gross Return</div></div>
+  <div class="stat"><div class="val">${gross_return_high_conf:.0f}</div><div class="lbl">High Confidence Return</div></div>
+  <div class="stat"><div class="val">{manual_research_count}</div><div class="lbl">Manual Research Req.</div></div>
 </div>
 
 <div class="search-container">
@@ -535,7 +546,7 @@ def generate_report(items: list, output_path: str, skipped_items: list = None, s
 </div>
 
 <div class="section-title gold">⭐ Top {TOP_N} Flip Opportunities — Ranked by {SORT_BY.upper()}</div>
-<div class="sort-note">Buy price estimated at typical estate sale rate (10–30% of resale value)</div>
+<div class="sort-note">Max recommended purchase price includes a conservative 40% safety margin. Gross projections exclude shipping and selling platform fees.</div>
 <div class="table-container">
 <table id="topTable"><thead>{_THEAD}</thead><tbody>{top_rows}</tbody></table>
 </div>
@@ -548,7 +559,7 @@ def generate_report(items: list, output_path: str, skipped_items: list = None, s
 {skipped_table}
 
 <div class="footer">
-  Generated by Estate Sale AI Analyzer &nbsp;·&nbsp; eBay comps from completed/sold listings only &nbsp;·&nbsp; Buy prices are estimates only
+  Generated by Estate Sale AI Analyzer &nbsp;·&nbsp; <strong>Disclosure: Gross projections exclude shipping, platform fees, taxes, and other selling expenses. Actual results depend on where and how the item is sold.</strong>
 </div>
 <script>
 let filterTimeout = null;

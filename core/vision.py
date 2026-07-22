@@ -50,6 +50,7 @@ Return ONLY a valid JSON object with these exact fields:
   "skip_reason": "If skip is true, explain why (e.g., blurry, structural, no item), otherwise empty string",
   "exact_model_identified": true,
   "multi_item_detected": false,
+  "price_tag_visible": false,
   "item_name": "Brand Model# Year/Spec — e.g. Princecraft Super Pro 176 Boat 1998 or Troy-Bilt Tomahawk 5HP Chipper",
   "condition_notes": "One line condition assessment",
   "confidence": 88,
@@ -62,7 +63,7 @@ Return ONLY a valid JSON object with these exact fields:
   "ai_value_low": 250,
   "ai_value_high": 500,
   "ai_value_notes": "One line reasoning for your estimate",
-  "estate_buy_price": null,
+  "estate_buy_price": 75,
   "item_group": "NOUN-ONLY 1-2 word label for the MAIN object",
   "resale_reasons": "Short keywords/phrase explaining why item holds resale appeal — e.g. Vintage, High demand, Made in USA, Rare collectible",
   "pkg_length_in": 12,
@@ -79,14 +80,17 @@ Rules:
   NEVER skip: furniture (sofas, chairs, tables, dressers, beds, cabinets), art, electronics, appliances, tools, or any identifiable item — even if generic/unbranded. These all hold estate sale value.
 - Multi-Item Flag: Set "multi_item_detected": true if the photo shows a cluttered scene, shelf, or group of multiple distinct saleable items (e.g., 5 different vases, a box of random tools, a shelf of books). You should still identify the single most prominent/valuable item in the photo, but flagging it alerts the human reviewer to hidden inventory.
 - Priority for Model/Product Identification: Prioritize identifying the exact brand and model number/name. If the exact model is not legible or identified, do NOT skip the image. Instead, set "exact_model_identified": false, and identify the general product/item type (e.g., "Princecraft Boat" or just "Boat") by combining the brand with the category/noun or any general visual specifications (e.g., HP rating, length, etc.).
-- confidence is 0-100 integer. Base this ONLY on how clearly you can identify the object from the photo. Do NOT artificially lower this score just because an exact model number is missing (we apply penalties for that downstream).
+- confidence is 0-100 integer. Only assign High confidence (>=80) if there is clear, visible identifying evidence (e.g. readable brand/model badge, signature, hallmark, serial number, or isolated clear object). For ambiguous photos, crowded multi-item photos, unbranded items, studio glass/jewelry without visible marks, or generic items, keep confidence LOW or MEDIUM (20-70).
+- estate_buy_price & price_tag_visible rules (CRITICAL):
+  1. Price Tag Visible: If an estate sale price tag or sticker is clearly visible in the photograph, set "price_tag_visible": true and set "estate_buy_price" to the EXACT numerical price on the tag.
+  2. No Price Tag Visible: If no tag is visible, but the item is identifiable, set "price_tag_visible": false and set "estate_buy_price" to your estimated 100% FULL estate-sale asking price for this item. Do NOT calculate discount-day prices. Do NOT use repeated standard fallback numbers (like $75 or $15). Each estimate MUST be item-specific based on its category, quality, and condition.
+  3. Weak Evidence: If the photo is ambiguous, crowded with multiple items, unidentifiable, or evidence is too weak for a realistic estimate, set "estate_buy_price": null and "price_tag_visible": false.
 - platform is one of: eBay, Etsy, Depop, Facebook Marketplace
 - ebay_condition MUST be one of: New, Open Box, Used, For parts. Evaluate from visual wear, packaging, etc.
 - ebay_search_query MUST include brand + model number/name + spec if readable — \
   never use generic terms like "boat" or "tool" alone. Do NOT append the word "sold" or "completed". Keep the search query clean and focused on the primary asset name. Avoid combining boat and outboard motors into one query (e.g. use 'Princecraft 176' or 'Princecraft Super Pro 176'). If the item is a specific type of object (like a pendant, mug, or hat) where a broad search would return unrelated merchandise, you MUST wrap the core noun in double-quotes to force eBay to only return exact matches. Example: 'Detroit Tigers "pendant"' or 'Pyrex "casserole dish"'.
 - ebay_exclusion_keywords MUST be an array of up to 5 single-word lowercase keywords representing parts, accessories, manuals, or unrelated items that share similar words. Generate HIGHLY SPECIFIC exclusions based on the item type. For example: if the item is a 'Leather Armchair', exclude ["cover", "cushion", "leg", "slipcover", "jacket"]. If it is a camera, exclude ["lens", "cap", "strap", "manual", "battery"]. Do NOT just copy the examples. Do NOT include words that are part of the item's actual name.
 - ai_value_low and ai_value_high are YOUR expert USD estimate, independent of eBay (set realistic values)
-- estate_buy_price MUST be calculated dynamically as 10-30% of your ai_value estimate. Do NOT copy examples or default to null unless the item has no value.
 
 Identifying Standalone/Detachable Equipment:
 - If the image focuses on a distinct, detachable, or valuable piece of equipment/accessory (such as a trolling motor, outboard motor, trailer, standalone tool attachment, or generator), identify the item as that specific accessory (e.g., "Minn Kota PowerDrive V2 Trolling Motor"), NOT the larger vehicle/boat it is attached to.

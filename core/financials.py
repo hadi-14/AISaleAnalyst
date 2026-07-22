@@ -45,26 +45,10 @@ def estimate_shipping_cost(sell_price: float, item_group: str, item_name: str = 
 def calc_financials(item: dict) -> dict:
     """
     Calculate resale financials for a single item record, including estimated
-    eBay fees, shipping, net proceeds, and recommended purchase prices.
+    resale value, recommended maximum buy price, projected gross return, and gross ROI.
 
-    Sell price is taken from the eBay median comp when available; otherwise
-    the midpoint of the AI's estimated value range is used.
-
-    Buy price comes from the AI's ``estate_buy_price`` field; if that is
-    zero or missing it defaults to 20 % of the sell price.
-
-    Parameters
-    ----------
-    item:
-        Item dict that must contain ``"ai"`` and ``"comps"`` sub-dicts.
-        ``"comps"`` must have a ``"mean"`` key (``"$NNN"`` or ``"N/A"``).
-
-    Returns
-    -------
-    dict
-        Keys: ``sell_price`` (float), ``ebay_fee`` (float), ``shipping`` (float),
-        ``net_after_fees`` (float), ``recommended_max_buy`` (float),
-        ``buy_price`` (float), ``profit`` (float), ``roi`` (float — percentage).
+    Primary financial metrics intentionally EXCLUDE assumed platform fees and
+    shipping costs, as requested by client feedback.
     """
     ai         = item["ai"]
     comps      = item["comps"]
@@ -72,19 +56,43 @@ def calc_financials(item: dict) -> dict:
     item_name  = ai.get("item_name") or ""
     cat_id     = ai.get("ebay_category_id")
 
+    # 1. Determine Estimated Resale Value (Sell Price)
     mean_str = comps.get("mean", "N/A")
     if mean_str != "N/A":
         sell_price = float(mean_str.replace("$", "").replace(",", ""))
     else:
-        lo         = float(ai.get("ai_value_low",  0) or 0)
-        hi         = float(ai.get("ai_value_high", 0) or 0)
+        lo = float(ai.get("ai_value_low",  0) or 0)
+        hi = float(ai.get("ai_value_high", 0) or 0)
         # Discount the AI's naked estimate by 50% if there are 0 reliable sold comps
         sell_price = ((lo + hi) / 2) * 0.5
 
-    # Calculate eBay fees
-    ebay_fee = estimate_ebay_fee(sell_price, cat_id)
+    # 2. Determine Estate Sale Buy Price (Observed Tag or 100% Est. Full Value)
+    raw_buy = ai.get("estate_buy_price")
+    has_buy_price = raw_buy is not None and float(raw_buy or 0) > 0
+    buy_price = float(raw_buy) if has_buy_price else 0.0
+    price_tag_visible = bool(ai.get("price_tag_visible", False))
 
-    # Live Shippo shipping rate using AI-estimated package dimensions
+    if not has_buy_price and sell_price > 0 and comps.get("count", 0) > 0:
+        # Fallback 100% full estate-sale asking price estimate (typical ~20% of resale value)
+        buy_price = round(sell_price * 0.20, 2)
+        has_buy_price = True
+
+    # 3. Recommended Maximum Purchase Price (incorporates safety margin for unknown fees/shipping)
+    if sell_price > 0:
+        recommended_max_buy = sell_price * (1.0 - MIN_PROFIT_MARGIN_PCT)
+    else:
+        recommended_max_buy = 0.0
+
+    # 4. Primary Gross Projections (Gross Return & Gross ROI without fee/shipping deductions)
+    if has_buy_price:
+        projected_gross_return = sell_price - buy_price
+        gross_roi = (projected_gross_return / buy_price * 100.0) if buy_price > 0 else 0.0
+    else:
+        # Require manual research when no buy price / tag is available and no comps exist
+        projected_gross_return = 0.0
+        gross_roi = 0.0
+
+    # Still calculate package shipping details for informational display in the UI if needed
     pkg_l  = float(ai.get("pkg_length_in", 0) or 0)
     pkg_w  = float(ai.get("pkg_width_in",  0) or 0)
     pkg_h  = float(ai.get("pkg_height_in", 0) or 0)
@@ -98,28 +106,9 @@ def calc_financials(item: dict) -> dict:
         item_group=item_group,
         item_name=item_name,
     )
-    shipping = shipping_detail["cost"]
-
-    # Store shipping detail on the item for the report
     item["shipping_detail"] = shipping_detail
 
-    # Net proceeds after fees
-    net_after_fees = sell_price - ebay_fee - shipping
-
-    # Recommended maximum purchase price: the most you can pay and still
-    # keep at least MIN_PROFIT_MARGIN_PCT of net proceeds as profit.
-    # When net is zero or negative, the item is unprofitable at any price.
-    if net_after_fees > 0:
-        recommended_max_buy = net_after_fees * (1 - MIN_PROFIT_MARGIN_PCT)
-    else:
-        recommended_max_buy = 0.0
-
-    # Actual estate sale buy price (AI estimate or default to 20 % of sell price)
-    buy_price = float(ai.get("estate_buy_price", 0) or 0)
-    if buy_price < sell_price * 0.10:
-        buy_price = sell_price * 0.20
-
-    # Calculate adjusted confidence based on listing match counts
+    # 5. Adjusted Confidence Calculation
     initial_conf = int(ai.get("confidence", 0))
     count = comps.get("count", 0)
     if count >= 10:
@@ -133,47 +122,33 @@ def calc_financials(item: dict) -> dict:
     else:
         adj_conf = initial_conf - 30
 
-    # Lower confidence when exact model is not identified
     if ai.get("exact_model_identified") is False:
         adj_conf -= 25
+    if ai.get("multi_item_detected") is True:
+        adj_conf -= 15
 
     adjusted_confidence = max(10, min(99, adj_conf))
 
-    # Expected net profit
-    profit = net_after_fees - buy_price
-    
-    # ROI based on actual buy price (pure math for display)
-    roi = (profit / buy_price * 100) if buy_price > 0 else 0.0
-    
-    # Composite Ranking / Penalties (used for sorting only)
-    if count == 0:
-        # Zero comps penalty: hard 0 or negative sort ranking
-        sort_roi = roi if roi < 0 else 0.0
-    elif adjusted_confidence < 75:
-        # Confidence penalty: only penalize positive rankings
-        if roi > 0:
-            multiplier = (adjusted_confidence / 100.0) ** 2
-            sort_roi = roi * multiplier
-        else:
-            sort_roi = roi
+    # 6. Composite Ranking Key
+    if not has_buy_price or count == 0:
+        sort_roi = -100.0
+    elif adjusted_confidence < 70:
+        sort_roi = gross_roi * ((adjusted_confidence / 100.0) ** 2) if gross_roi > 0 else gross_roi
     else:
-        sort_roi = roi
+        sort_roi = gross_roi
 
     return {
-        "sell_price":          sell_price,
-        "ebay_fee":            round(ebay_fee, 2),
-        "shipping":            round(shipping, 2),
-        "shipping_carrier":    shipping_detail.get("carrier", "Estimated"),
-        "shipping_service":    shipping_detail.get("service", ""),
-        "shipping_est_days":   shipping_detail.get("est_days"),
-        "shipping_source":     shipping_detail.get("source", "fallback"),
-        "net_after_fees":      round(net_after_fees, 2),
-        "recommended_max_buy": round(recommended_max_buy, 2),
-        "buy_price":           round(buy_price, 2),
-        "profit":              round(profit, 2),
-        "roi":                 round(roi, 1),
-        "sort_roi":            sort_roi,
-        "adjusted_confidence": adjusted_confidence,
+        "sell_price":             sell_price,
+        "recommended_max_buy":    round(recommended_max_buy, 2),
+        "buy_price":              round(buy_price, 2),
+        "has_buy_price":          has_buy_price,
+        "price_tag_visible":      price_tag_visible,
+        "projected_gross_return": round(projected_gross_return, 2),
+        "gross_roi":              round(gross_roi, 1),
+        "sort_roi":               sort_roi,
+        "adjusted_confidence":    adjusted_confidence,
+        "profit":                 round(projected_gross_return, 2), # Backward compatibility fallback
+        "roi":                    round(gross_roi, 1),              # Backward compatibility fallback
     }
 
 

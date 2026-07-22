@@ -55,3 +55,6 @@ ebay_debug*.html
 Thumbs.db
 
 reports/
+Feedback/
+package_codebase.py
+core/report.py
