@@ -3,29 +3,44 @@ ebay.py
 =======
 eBay sold-listings scraper for AISaleAnalyst.
 
-Uses ``curl_cffi`` (Chrome TLS impersonation) + ``BeautifulSoup`` to fetch
-eBay search pages without any browser.  A one-time warm-up request to the
-eBay homepage establishes the session cookies that make subsequent searches
-return a 200 OK with fully-rendered HTML.
+Strategy, in plain terms
+------------------------
+1. Try a fast, browser-less request via ``curl_cffi`` (Chrome TLS
+   impersonation). This works most of the time and is cheap.
+2. If eBay serves an anti-bot block (PerimeterX interstitial or an
+   hCaptcha), fall back to a real, visible Chrome browser
+   (``undetected_chromedriver``). If it's just the plain interstitial, it
+   usually clears itself in a few seconds. If it's an hCaptcha, the script
+   waits for YOU to solve it by hand in that window -- nothing here
+   auto-solves captchas.
+3. Once the browser has cleared a block, we just keep using that same
+   browser for every request for the rest of the run (curl_cffi's cookies
+   don't transfer reliably once eBay has escalated to hCaptcha, so there's
+   no point trying to hand things back).
+
+Everything is serialized behind a single lock (`_ebay_lock`), because we
+only ever want one eBay request in flight at a time -- that's what keeps
+this simple: no separate semaphore, no circuit-breaker class, no
+event-based "other threads wait here" bookkeeping. One lock does all of
+it, including holding through a manual captcha solve, which is exactly
+the behavior we want (nothing else hits eBay while you're solving it).
 
 Public API
 ----------
 scrape_ebay_comps(query, ai_val_low, item_name, ...)
     Scrape eBay completed/sold listings for ``query`` and return a comps
-    summary dict.  Uses a 4-level progressive fallback so that results are
-    always returned even when strict filters over-restrict.
-
-get_ai_negative_keywords(item_name, query)
-    Ask the AI for item-specific eBay exclusion keywords (``-word`` syntax).
-    Results are cached per query for the lifetime of the process.
+    summary dict.  Uses a progressive fallback so results are returned
+    even when strict filters over-restrict.
 
 should_filter_by_title(title, query)
     Post-filter: return True if a listing title contains known parts /
     accessory words that are not part of the search query itself.
 """
 
+import os
 import re
 import time
+import random
 import threading
 
 from bs4 import BeautifulSoup
@@ -39,19 +54,34 @@ else:
     from .config import gemini_client
 
 # ---------------------------------------------------------------------------
-# Shared curl_cffi session (one warm-up, reused for all searches)
+# Single lock for everything eBay-related
+# ---------------------------------------------------------------------------
+# Only one eBay request is ever allowed in flight, from any thread. This
+# lock enforces that AND doubles as the throttle gate AND doubles as the
+# "only one thread solves a block at a time" gate -- one primitive, three
+# jobs, instead of a semaphore + rate-limit lock + circuit-breaker Event.
+_ebay_lock = threading.Lock()
+
+_last_request_time: float = 0.0
+_MIN_REQUEST_INTERVAL: float = 4.0  # seconds between any two eBay requests
+
+
+def _throttle() -> None:
+    """Sleep until at least _MIN_REQUEST_INTERVAL seconds have passed since
+    the last eBay request. Must be called while holding `_ebay_lock`."""
+    global _last_request_time
+    now = time.time()
+    wait = (_last_request_time + _MIN_REQUEST_INTERVAL) - now
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_time = time.time()
+
+
+# ---------------------------------------------------------------------------
+# curl_cffi session (fast path)
 # ---------------------------------------------------------------------------
 
 _session: cffi_requests.Session | None = None
-_session_lock = threading.Lock()
-
-# Soft-block detection: track how many items in a row returned 0 results
-# across ALL fallbacks. If this hits _BLOCK_THRESHOLD, we pause and cycle.
-_consecutive_failures: int = 0
-_failures_lock = threading.Lock()
-_BLOCK_THRESHOLD: int = 3       # pause after this many consecutive zero-result items
-_BLOCK_PAUSE_SECONDS: int = 70  # how long to sleep when a block is detected
-_cooldown_until: float = 0.0    # global timestamp for pausing all workers
 
 _REQUEST_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -63,44 +93,272 @@ _REQUEST_HEADERS = {
     "Sec-Fetch-User": "?1",
 }
 
+# Phrases that indicate eBay served an anti-bot interstitial instead of real
+# results.
+_BLOCK_PHRASES = (
+    "captcha",
+    "hcaptcha",
+    "security measure",
+    "pardon our interruption",
+    "perimeterx",
+    "access to this page has been denied",
+)
+
 
 def _get_session() -> cffi_requests.Session:
-    """
-    Return the shared curl_cffi session, creating and warming it up on first call.
-
-    The warm-up GET to the eBay homepage establishes the bot-detection cookies
-    (``__uzma``, ``nonsession``, etc.) that are required for search pages to
-    return 200 OK with full HTML instead of a 403 Error Page.
-    """
+    """Return the shared curl_cffi session, creating and warming it up on
+    first call. Must be called while holding `_ebay_lock`."""
     global _session
     if _session is not None:
         return _session
 
-    with _session_lock:
-        if _session is not None:          # double-checked locking
-            return _session
+    print("  [eBay] Warming up HTTP session...")
+    sess = cffi_requests.Session(impersonate="chrome124")
+    try:
+        _throttle()
+        sess.get("https://www.ebay.com/", headers=_REQUEST_HEADERS, timeout=15)
+        print("  [eBay] Session ready.")
+    except Exception as exc:
+        print(f"  [eBay] Warm-up warning: {exc}")
 
-        print("  [eBay] Warming up HTTP session...")
-        sess = cffi_requests.Session(impersonate="chrome124")
-        try:
-            sess.get("https://www.ebay.com/", headers=_REQUEST_HEADERS, timeout=15)
-            time.sleep(0.5)
-            print("  [eBay] Session ready.")
-        except Exception as exc:
-            print(f"  [eBay] Warm-up warning: {exc}")
+    _session = sess
+    return _session
 
-        _session = sess
-        return _session
 
-def close_ebay_session():
+def close_ebay_session() -> None:
     global _session
-    with _session_lock:
-        if _session is not None:
-            try:
-                _session.close()
-            except Exception:
-                pass
-            _session = None
+    if _session is not None:
+        try:
+            _session.close()
+        except Exception:
+            pass
+        _session = None
+
+
+# ---------------------------------------------------------------------------
+# Selenium fallback (used once curl_cffi gets blocked)
+# ---------------------------------------------------------------------------
+
+_SELENIUM_PROFILE_DIR = os.path.join(os.path.expanduser("~"), ".ebay_scraper_chrome_profile")
+_SELENIUM_WAIT_TIMEOUT = 25.0     # seconds to wait for a plain interstitial to auto-clear
+_SELENIUM_HEADLESS = False        # must stay False -- you need to see/click any hCaptcha
+_MANUAL_CAPTCHA_TIMEOUT = 600.0   # seconds to wait for you to manually solve an hCaptcha
+
+_selenium_driver = None
+
+#: Once True, every fetch uses the browser instead of curl_cffi for the
+#: rest of the run (curl_cffi doesn't stay trusted once eBay has escalated
+#: to a real hCaptcha, so there's no point switching back).
+_use_selenium = False
+
+#: Tracks whether the Selenium browser has visited plain ebay.com yet.
+#: Jumping straight from a brand-new/relaunched browser session into a
+#: deep, filtered search URL (LH_Complete, LH_Sold, exclusions, etc.) with
+#: no normal browsing history looks bot-like to eBay and gets redirected
+#: to a "Sign in or Register" wall -- even though the exact same URL opens
+#: fine if you paste it in after the browser already has some history.
+#: Visiting the homepage first mimics a person landing there before
+#: searching, and avoids the wall.
+_selenium_warmed_up = False
+
+
+def _page_has_hcaptcha(driver) -> bool:
+    try:
+        if driver.find_elements("css selector", "iframe[src*='hcaptcha.com'], div.h-captcha, #h-captcha"):
+            return True
+        if "hcaptcha" in (driver.page_source or "").lower():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _page_is_signin_wall(driver) -> bool:
+    title = (driver.title or "").lower()
+    return "sign in" in title or "register" in title or "/signin" in (driver.current_url or "").lower()
+
+
+def _driver_is_alive(driver) -> bool:
+    """A crashed/closed Chrome leaves the Python object intact but every
+    call into it fails -- this is a cheap way to detect that."""
+    try:
+        _ = driver.title
+        return True
+    except Exception:
+        return False
+
+
+def _get_selenium_driver():
+    """Return the shared, persistent (visible) Chrome driver, launching it
+    (or relaunching it, if the previous one crashed) as needed. Must be
+    called while holding `_ebay_lock`."""
+    global _selenium_driver, _selenium_warmed_up
+
+    if _selenium_driver is not None and _driver_is_alive(_selenium_driver):
+        return _selenium_driver
+
+    if _selenium_driver is not None:
+        print("  [eBay/Selenium] Previous Chrome instance isn't responding -- relaunching.")
+        try:
+            _selenium_driver.quit()
+        except Exception:
+            pass
+        _selenium_driver = None
+        _selenium_warmed_up = False  # fresh process -- needs a homepage visit again
+
+    import undetected_chromedriver as uc
+    import chrome_version
+
+    options = uc.ChromeOptions()
+    # Reusing the same profile dir means a relaunch keeps any cookies /
+    # trust eBay already granted the previous instance.
+    options.add_argument(f"--user-data-dir={_SELENIUM_PROFILE_DIR}")
+    options.add_argument("--profile-directory=Default")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--window-size=1280,900")
+    if _SELENIUM_HEADLESS:
+        options.add_argument("--headless=new")
+
+    print("  [eBay/Selenium] Launching Chrome...")
+    _selenium_driver = uc.Chrome(
+        options=options,
+        version_main=int(chrome_version.get_chrome_version().split(".")[0]),
+    )
+    return _selenium_driver
+
+
+def close_selenium_driver() -> None:
+    global _selenium_driver
+    if _selenium_driver is not None:
+        try:
+            _selenium_driver.quit()
+        except Exception:
+            pass
+        _selenium_driver = None
+
+
+def _selenium_visit_homepage(driver) -> None:
+    """Land on plain ebay.com first, like a person would, before searching."""
+    global _selenium_warmed_up
+    print("  [eBay/Selenium] Visiting ebay.com first (avoids the sign-in wall on deep links)...")
+    driver.get("https://www.ebay.com/")
+    time.sleep(random.uniform(1.5, 3.0))
+    _selenium_warmed_up = True
+
+
+def _selenium_fetch(url: str) -> str:
+    """
+    Navigate to *url* with the persistent browser and return its final
+    page source, waiting out any interstitial or (manually solved)
+    hCaptcha first. Must be called while holding `_ebay_lock`.
+    """
+    global _selenium_warmed_up
+
+    driver = _get_selenium_driver()
+
+    if not _selenium_warmed_up:
+        _selenium_visit_homepage(driver)
+
+    driver.get(url)
+
+    # Sign-in wall: eBay increasingly requires an actual logged-in session
+    # to view sold/completed listings, not just a "less fresh" browser. A
+    # single homepage re-warm can clear the "session looks too new" case,
+    # but if it's still there after that, it genuinely wants you signed
+    # in -- wait for you to log into your own eBay account in this same
+    # window. Because the browser profile persists (`_SELENIUM_PROFILE_DIR`),
+    # you only need to do this once; future runs stay logged in.
+    if _page_is_signin_wall(driver):
+        print("  [eBay/Selenium] Hit the sign-in wall -- re-warming via the homepage and retrying once.")
+        _selenium_visit_homepage(driver)
+        driver.get(url)
+
+    if _page_is_signin_wall(driver):
+        print(f"  [eBay/Selenium] 🔑 eBay wants you signed in to view sold listings. Please log "
+              f"into your eBay account in the open Chrome window -- this only needs doing once, "
+              f"the browser profile remembers it after that. Waiting up to "
+              f"{_MANUAL_CAPTCHA_TIMEOUT/60:.0f} minutes...")
+        manual_waited = 0.0
+        while manual_waited < _MANUAL_CAPTCHA_TIMEOUT:
+            time.sleep(3.0)
+            manual_waited += 3.0
+            if not _page_is_signin_wall(driver):
+                print(f"  [eBay/Selenium] ✅ Signed in after ~{manual_waited:.0f}s -- reloading the page.")
+                driver.get(url)
+                break
+        else:
+            print("  [eBay/Selenium] Timed out waiting for sign-in.")
+
+    # Plain interstitial: give it a short while to clear on its own.
+    waited = 0.0
+    while waited < _SELENIUM_WAIT_TIMEOUT:
+        title = (driver.title or "").lower()
+        if "pardon our interruption" not in title:
+            break
+        if _page_has_hcaptcha(driver):
+            break
+        time.sleep(1.5)
+        waited += 1.5
+
+    # hCaptcha: wait for a human to solve it. No auto-solving.
+    if _page_has_hcaptcha(driver):
+        print(f"  [eBay/Selenium] 🧩 hCaptcha detected -- please solve it in the open "
+              f"Chrome window. Waiting up to {_MANUAL_CAPTCHA_TIMEOUT/60:.0f} minutes...")
+        manual_waited = 0.0
+        while manual_waited < _MANUAL_CAPTCHA_TIMEOUT:
+            time.sleep(3.0)
+            manual_waited += 3.0
+            if not _page_has_hcaptcha(driver) and "pardon our interruption" not in (driver.title or "").lower():
+                print(f"  [eBay/Selenium] ✅ Cleared after ~{manual_waited:.0f}s.")
+                break
+        else:
+            print(f"  [eBay/Selenium] Timed out waiting for the hCaptcha to be solved.")
+
+    return driver.page_source
+
+
+# ---------------------------------------------------------------------------
+# The one fetch function everything else calls
+# ---------------------------------------------------------------------------
+
+def _fetch_page(url: str) -> str:
+    """
+    Fetch *url* and return its HTML. Tries curl_cffi first; if that comes
+    back blocked, switches to the Selenium browser (solving/waiting out
+    the block first) and stays on Selenium for the rest of the run.
+
+    Everything is serialized under `_ebay_lock`, including a manual
+    captcha wait -- that's intentional, we only want one thing touching
+    eBay at a time regardless of why.
+    """
+    global _use_selenium
+
+    with _ebay_lock:
+        _throttle()
+
+        if _use_selenium:
+            return _selenium_fetch(url)
+
+        # --- curl_cffi attempt ---
+        session = _get_session()
+        try:
+            resp = session.get(
+                url,
+                headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
+                timeout=20,
+            )
+            text_lower = resp.text.lower()
+            blocked = any(p in text_lower for p in _BLOCK_PHRASES) or resp.status_code != 200
+            if not blocked:
+                return resp.text
+            print("  [eBay] 🚨 Blocked -- falling back to the browser for this and all further requests.")
+        except Exception as exc:
+            print(f"  [eBay] Request error ({exc}) -- falling back to the browser.")
+
+        # --- Escalate to the browser, right here, same lock held ---
+        _use_selenium = True
+        return _selenium_fetch(url)
+
 
 # ---------------------------------------------------------------------------
 # Post-filter: static negative word list
@@ -181,7 +439,7 @@ def should_filter_by_title(title: str, query: str, inclusion_keywords: list[str]
     # Positive Match Filter: Require at least some core query nouns to appear in title
     stop_words = {"vintage", "antique", "retro", "mid-century", "midcentury", "set", "the", "a", "an", "and", "or", "with", "of", "in", "on", "for", "rare", "old", "used", "original"}
     core_query_words = query_words - stop_words
-    
+
     if core_query_words:
         title_words = set(re.findall(r"\b\w+\b", title_lower))
         matches = len(core_query_words.intersection(title_words))
@@ -201,16 +459,12 @@ def should_filter_by_title(title: str, query: str, inclusion_keywords: list[str]
 
 
 # ---------------------------------------------------------------------------
-# HTML scraping helpers (BeautifulSoup)
+# HTML parsing
 # ---------------------------------------------------------------------------
 
 def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str], int]:
     """
     Parse sold prices, listing links, and total result count from an eBay search results HTML page.
-
-    Targets the ``su-card-container__attributes`` card layout used by eBay's
-    current SSR search pages.  Falls back to a regex price sweep if no cards
-    are found.
 
     Parameters
     ----------
@@ -249,7 +503,7 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
 
     # Select all direct list items under srp-results to detect rewrite/fewer-words answer banners
     items = soup.select("ul.srp-results > li")
-    
+
     # If there's no heading and no items, the page failed to load fully (stealth block or timeout)
     if not heading and not items:
         page_title = soup.title.string.strip() if soup.title else "No Title"
@@ -258,7 +512,7 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
     for item in items:
         item_class = " ".join(item.get("class", []))
         item_text = item.get_text(strip=True).lower()
-        
+
         # Stop iteration if we reach eBay's "Results matching fewer words" or "No exact matches" banner
         if "srp-river-answer" in item_class or "results matching fewer words" in item_text or "no exact matches" in item_text:
             break
@@ -309,92 +563,40 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
 
     return prices, comp_links, total_count
 
-import threading
-import time
-import random
 
 def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str], int]:
     """
-    Fetch *search_url* via the shared curl_cffi session and extract sold prices.
-
-    Parameters
-    ----------
-    search_url:
-        Fully-formed eBay search URL.
-    query:
-        The search query string, used by :func:`should_filter_by_title`.
-
-    Returns
-    -------
-    tuple[list[float], list[str], int]
-        ``(prices, comp_links, total_count)``
+    Fetch *search_url* and extract sold prices, retrying a small, fixed
+    number of times on genuine errors or an unrecognized page. Blocking is
+    handled transparently inside `_fetch_page` (curl_cffi -> browser
+    fallback), so this function doesn't need to know or care which path
+    actually served the page.
     """
-    global _session, _cooldown_until
     for attempt in range(max_retries):
-        while True:
-            if time.time() < _cooldown_until:
-                time.sleep(1.0)
-            else:
-                break
-                
-        session = _get_session()
         try:
-            # Independent per-thread sleep to mimic human browsing and prevent CAPTCHAs.
-            # Increase sleep time if we are retrying due to a block.
-            sleep_time = random.uniform(1.0, 2.0) if attempt == 0 else random.uniform(5.0, 10.0)
-            time.sleep(sleep_time)
-            
-            resp = session.get(
-                search_url,
-                headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
-                timeout=20,
-            )
-            
-            text_lower = resp.text.lower()
-            is_blocked = False
-            
-            if "captcha" in text_lower or "security measure" in text_lower:
-                print(f"  [eBay] 🚨 CAPTCHA BLOCK DETECTED (Attempt {attempt+1}/{max_retries})")
-                is_blocked = True
-            elif "error page | ebay" in text_lower or "something went wrong on our end" in text_lower:
-                print(f"  [eBay] 🚨 ERROR PAGE BLOCK DETECTED (Attempt {attempt+1}/{max_retries})")
-                is_blocked = True
-            elif resp.status_code != 200:
-                print(f"  [eBay] HTTP {resp.status_code} for {search_url[:80]} (Attempt {attempt+1}/{max_retries})")
-                is_blocked = True
-                
-            if is_blocked:
-                if attempt < max_retries - 1:
-                    print(f"  [eBay] Auto-resolving block... sleeping and cycling session.")
-                    _session = None # Force session recreation
-                    _cooldown_until = max(_cooldown_until, time.time() + 15)
-                    continue
-                else:
-                    print("  [eBay] Max retries reached. Raising exception to prevent fallback cascade.")
-                    raise RuntimeError("eBay Anti-Bot Blocked")
-            
-            prices, links, total_cnt = _parse_prices_from_html(resp.text, query, inclusion_keywords=inclusion_keywords)
-            
-            # Save HTML if 0 results, to help diagnose if it's a DOM change or block
-            if not prices:
-                with open("ebay_debug_0_results.html", "w", encoding="utf-8") as f:
-                    f.write(resp.text)
-                    
-            return prices, links, total_cnt
-        except RuntimeError:
-            raise # Re-raise the block exception to abort fallbacks
+            html = _fetch_page(search_url)
         except Exception as exc:
-            print(f"  [eBay] Request error: {exc}")
+            print(f"  [eBay] Fetch error: {exc}")
             if attempt < max_retries - 1:
-                # If we hit our stealth block ValueError, cycle the session
-                if isinstance(exc, ValueError):
-                    _session = None
-                    _cooldown_until = max(_cooldown_until, time.time() + 15)
-                else:
-                    time.sleep(5)
+                time.sleep(5)
                 continue
             return [], [], 0
-            
+
+        try:
+            prices, links, total_cnt = _parse_prices_from_html(html, query, inclusion_keywords=inclusion_keywords)
+        except ValueError as exc:
+            print(f"  [eBay] Unrecognized page ({exc}) -- retrying")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            return [], [], 0
+
+        if not prices:
+            with open("ebay_debug_0_results.html", "w", encoding="utf-8") as f:
+                f.write(html)
+
+        return prices, links, total_cnt
+
     return [], [], 0
 
 
@@ -477,8 +679,8 @@ def scrape_ebay_comps(
     """
     Scrape eBay sold listings for *query* and return a comps summary.
 
-    The ``driver`` parameter is accepted but ignored -- scraping now uses
-    ``curl_cffi`` + ``BeautifulSoup`` with no browser required.
+    The ``driver`` parameter is accepted but ignored -- scraping now
+    manages its own HTTP/browser fetching internally (see `_fetch_page`).
 
     Uses a 4-level progressive fallback to guarantee results:
 
@@ -507,7 +709,6 @@ def scrape_ebay_comps(
     dict
         Keys: ``low``, ``median``, ``high``, ``count``, ``link``, ``links``, ``fallback_used``.
     """
-    global _consecutive_failures, _session, _cooldown_until
     try:
         import urllib.parse
         cleaned_query = re.sub(r"\b(sold|completed|complete)\b", "", query, flags=re.IGNORECASE).strip()
@@ -515,11 +716,11 @@ def scrape_ebay_comps(
 
         min_price       = int(ai_val_low * 0.20) if ai_val_low and ai_val_low > 0 else 0
         neg_keywords    = exclusion_keywords or []
-        
+
         # Proper URL encoding for the search query and exclusions
         base_nkw        = urllib.parse.quote_plus(cleaned_query)
         exclusion_str   = "".join(f"+-{urllib.parse.quote_plus(kw)}" for kw in neg_keywords)
-        
+
         floor_param     = f"&_udlo={min_price}" if min_price > 0 else ""
         condition_param = get_condition_param(ebay_condition)
         strict_floor    = (ai_val_low >= 100.0)
@@ -551,7 +752,7 @@ def scrape_ebay_comps(
             else:
                 # Looser bare attempt
                 prices, comp_links, total_cnt = _fetch_prices_from_url(url, fallback_query or cleaned_query, inclusion_keywords=None)
-            
+
             if prices:
                 best_prices = prices
                 best_links = comp_links
@@ -610,30 +811,13 @@ def scrape_ebay_comps(
                 res["fallback_used"] = True
                 return res
 
-            # All fallbacks exhausted with 0 results — check for soft block
-            with _failures_lock:
-                _consecutive_failures += 1
-                fails = _consecutive_failures
-
-            if fails >= _BLOCK_THRESHOLD:
-                print(f"  [eBay] ⚠️  {fails} consecutive items returned 0 results — "
-                      f"eBay soft block detected. Pausing {_BLOCK_PAUSE_SECONDS}s and cycling session...")
-                with _failures_lock:
-                    _consecutive_failures = 0
-                with _session_lock:
-                    _session = None   # Force a fresh warm-up on next request
-                _cooldown_until = time.time() + _BLOCK_PAUSE_SECONDS
-
+            print(f"  [{item_name}] 0 genuine results after all fallbacks.")
             return {
                 "low": "N/A", "mean": "N/A", "high": "N/A",
                 "count": 0, "active_low": active_low, "active_high": active_high, "active_count": active_count,
                 "link": used_url, "links": [],
                 "fallback_used": False, "query_used": exact_query,
             }
-
-        # Successful result — reset consecutive failure counter
-        with _failures_lock:
-            _consecutive_failures = 0
 
         low_val, mean_val, high_val = process_ebay_prices(prices)
 
