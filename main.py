@@ -567,8 +567,24 @@ def main(max_images_override: int | None = None) -> None:
 
 if __name__ == "__main__":
     import argparse
+    from datetime import datetime
+
     parser = argparse.ArgumentParser(description="AISaleAnalyst")
     parser.add_argument("--max-images", type=int, default=None, help="Temporarily override MAX_IMAGES from .env")
     parser.add_argument("--dev", action="store_true", help="Enable development testing mode (cheaper AI model, capped items, no emails)")
     args = parser.parse_args()
-    main(max_images_override=args.max_images)
+
+    start_dt = datetime.now()
+    start_ts = time.time()
+    print(f"Start time: {start_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    try:
+        main(max_images_override=args.max_images)
+    finally:
+        end_dt = datetime.now()
+        elapsed = time.time() - start_ts
+        mins, secs = divmod(elapsed, 60)
+        hours, mins = divmod(mins, 60)
+
+        print(f"End time: {end_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Elapsed time: {int(hours)}h {int(mins)}m {secs:.1f}s")
