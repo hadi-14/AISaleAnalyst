@@ -342,8 +342,11 @@ def _get_selenium_driver():
 
     headless = _is_headless()
     if headless:
+        options.add_argument('--no-sandbox')
         options.add_argument("--headless=new")
+        options.add_argument('--disable-dev-shm-usage')
         options.add_argument("--disable-gpu")
+        
         print(
             "  [eBay/Selenium] Launching Chrome in HEADLESS mode (EBAY_HEADLESS=1). "
             "Any hCaptcha or sign-in wall hit in this mode cannot be solved by a "
