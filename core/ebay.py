@@ -5,49 +5,55 @@ eBay sold-listings scraper for AISaleAnalyst.
 
 Strategy, in plain terms
 ------------------------
-1. Try a fast, browser-less request via ``curl_cffi`` (Chrome TLS
-   impersonation). This works most of the time and is cheap.
-2. If eBay serves an anti-bot block (PerimeterX interstitial or an
-   hCaptcha), fall back to a real Chrome browser
-   (``undetected_chromedriver``). If it's just the plain interstitial, it
-   usually clears itself in a few seconds. If it's an hCaptcha and the
-   browser is running visibly (the default, CLI use), the script waits for
-   YOU to solve it by hand in that window -- nothing here auto-solves
-   captchas. If the browser is running headless (see "Headless mode"
-   below), there is nobody to solve it and that request will simply come
-   back blocked.
-3. Once the browser has cleared a block, we just keep using that same
-   browser for every request for the rest of the run (curl_cffi's cookies
-   don't transfer reliably once eBay has escalated to hCaptcha, so there's
-   no point trying to hand things back).
+Every request goes straight through a real Chrome browser
+(``undetected_chromedriver``), not a bare HTTP request. There used to be a
+faster ``curl_cffi``-based path tried first, with Selenium only as a
+fallback when that got blocked -- it's been retired. In practice eBay was
+blocking the curl_cffi path on effectively every request, so it wasn't
+saving anything; it was just adding a doomed round-trip in front of every
+single fetch before falling through to Selenium anyway. Going straight to
+Selenium is both simpler and, empirically, no slower.
+
+To avoid paying a full "cold" trust-building cost on every browser launch,
+session cookies are persisted to disk after each fetch (see
+``_save_selenium_cookies_to_disk`` / ``_load_cookies_from_disk``) and
+re-applied to a freshly launched browser before its first real request.
+The Chrome profile directory (``_SELENIUM_PROFILE_DIR``) is also reused
+run to run, which is what lets a one-time manual sign-in "stick" for
+future runs, headless or not.
+
+If eBay serves an anti-bot block (PerimeterX interstitial or an
+hCaptcha):
+- If the browser is running visibly (the default, CLI use), the script
+  waits for YOU to solve it by hand in that window -- nothing here
+  auto-solves captchas.
+- If the browser is running headless (see "Headless mode" below), there
+  is nobody to solve it and that request will simply come back blocked.
 
 Headless mode
 -------------
-By default the Selenium fallback launches a *visible* Chrome window, since
-solving an hCaptcha or a sign-in/2FA flow requires a human looking at the
-screen. When AISaleAnalyst is driven from ``webapp.py`` (no desktop/display
-attached, e.g. a server), set the environment variable ``EBAY_HEADLESS=1``
-before the run starts and the Selenium fallback will launch headless
-instead. ``webapp.py`` does this automatically.
+By default the browser launches *visible*, since solving an hCaptcha or a
+sign-in/2FA flow requires a human looking at the screen. When
+AISaleAnalyst is driven from ``webapp.py`` (no desktop/display attached,
+e.g. a server), set the environment variable ``EBAY_HEADLESS=1`` before
+the run starts and the browser will launch headless instead. ``webapp.py``
+does this automatically.
 
 **Trade-off:** in headless mode, any hCaptcha or eBay sign-in wall cannot
 be solved by a human. Those requests will simply fail (return 0 comps for
-that item) rather than pausing for manual input. Headless mode is
-appropriate for unattended/server use where the fast ``curl_cffi`` path
-handles the bulk of requests and occasional blocked items are acceptable;
-it's not a fix for eBay blocking outright.
+that item) rather than pausing for manual input.
 
-Two different concurrency rules apply depending on which path is active:
-- curl_cffi (the normal case): a small pool of sessions (`_CURL_POOL_SIZE`)
-  allows several requests in flight at once, each spaced out by `_stagger()`
-  so they don't all fire in the same instant. This is what lets N parallel
-  workers actually get N-way parallelism on the eBay side, instead of every
-  worker queuing behind a single global request-at-a-time gate.
-- Selenium (only once curl_cffi gets blocked): there's exactly one browser
-  instance, so that part *is* fully exclusive behind `_state.lock` --
-  including holding the lock through a manual captcha/sign-in solve (when
-  running visibly), which is exactly the behavior we want (nothing else
-  touches eBay while you're solving it).
+Concurrency
+-----------
+There is exactly **one** browser instance for the whole process, and every
+fetch runs under `_state.lock` -- fully exclusive, including holding the
+lock through a manual captcha/sign-in solve (when running visibly), which
+is exactly the behavior we want (nothing else touches eBay while you're
+solving it). This means eBay requests from multiple worker threads now
+serialize rather than overlapping -- there's no longer a pool of several
+requests genuinely in flight at once. Keep ``EBAY_WORKERS`` low (1-2);
+raising it no longer buys real eBay-side parallelism, it just queues more
+threads up waiting for the same lock.
 
 Public API
 ----------
@@ -66,11 +72,9 @@ import re
 import time
 import json
 import random
-import queue
 import threading
 
 from bs4 import BeautifulSoup
-from curl_cffi import requests as cffi_requests
 
 from .config import AI_PROVIDER, EBAY_DELAY, fix_and_parse_json
 
@@ -83,27 +87,15 @@ else:
 # ---------------------------------------------------------------------------
 # Shared scraper state
 # ---------------------------------------------------------------------------
-# `lock` guards the Selenium side only (one browser instance => fully
-# exclusive while it's active). The curl_cffi side does NOT use `lock` for
-# individual requests -- it uses `curl_pool` (a small pool of sessions,
-# capped concurrency) plus `_stagger()` for spacing, so several requests
-# can genuinely be in flight at once.
+# `lock` guards the single shared browser -- every fetch is fully
+# exclusive while it's active (see module docstring's "Concurrency"
+# section).
 
 class _State:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.last_request_time: float = 0.0
-        #: All curl_cffi sessions ever created, kept around so cookie syncs
-        #: (see `_sync_selenium_cookies_to_cffi`) can update every one of
-        #: them, not just whichever session happens to be free at the time.
-        self.curl_sessions: list[cffi_requests.Session] = []
-        #: The subset of `curl_sessions` currently free to use. Checking a
-        #: session out (`.get()`) and back in (`.put()`) is what enforces
-        #: the concurrency cap -- see `_try_curl_fetch`.
-        self.curl_pool: "queue.Queue[cffi_requests.Session] | None" = None
-        self.curl_pool_lock = threading.Lock()
         self.driver = None
-        self.use_selenium: bool = False
         #: Whether the Selenium browser has visited plain ebay.com yet in
         #: this process. Jumping straight from a brand-new/relaunched
         #: browser session into a deep, filtered search URL (LH_Complete,
@@ -116,18 +108,10 @@ class _State:
 
 _state = _State()
 
-#: How many curl_cffi requests are allowed in flight at once. This is the
-#: real lever for "faster but riskier" vs "slower but safer" -- raise it
-#: for more throughput, lower it (or drop to 1) if eBay starts blocking
-#: more often under load. Raised from 3 -> 5, leaving headroom under an
-#: 8-worker run rather than matching it 1:1, since eBay traffic is only
-#: part of what each worker does.
-_CURL_POOL_SIZE: int = 5
-
 #: Where a run's cookies get saved so the *next* run can start already
-#: trusted, instead of needing to hit a block and pay the Selenium cost
-#: again from cold. Best-effort only -- if this file is missing, corrupt,
-#: or stale, we just fall back to the normal cold-start path.
+#: trusted, instead of needing to hit a block and rebuild trust again from
+#: cold. Best-effort only -- if this file is missing, corrupt, or stale, we
+#: just fall back to the normal cold-start path.
 _COOKIE_CACHE_PATH = os.path.join(os.path.expanduser("~"), ".ebay_scraper_cookies.json")
 
 #: Safety net for the cache file's overall age, on top of each cookie's
@@ -138,28 +122,22 @@ _COOKIE_CACHE_PATH = os.path.join(os.path.expanduser("~"), ".ebay_scraper_cookie
 #: expiry check below is what does the real filtering.
 _COOKIE_CACHE_MAX_AGE: float = 12 * 3600
 
-#: Base seconds between request *starts* (jittered ±30%). This only spaces
-#: out when requests begin, not their full duration -- with `_CURL_POOL_SIZE`
-#: sessions able to be in flight simultaneously, actual throughput is well
-#: above 1 request per interval.
+#: Minimum seconds between successive page fetches (jittered ±30%), so we
+#: don't hammer eBay back-to-back. Since every fetch is already serialized
+#: behind `_state.lock`, this is a straightforward pause between one
+#: fetch finishing and the next one starting.
 _MIN_REQUEST_INTERVAL: float = 1.2
-
-_stagger_lock = threading.Lock()
 
 
 def _stagger() -> None:
-    """Space out request *starts* a little, with jitter, so concurrent
-    requests don't all fire in the same instant. Unlike the old `_throttle`
-    (which held a lock for a whole request's duration), this only holds a
-    lock for the instant it takes to check/update a timestamp -- the actual
-    network call happens outside it, so requests can genuinely overlap."""
-    with _stagger_lock:
-        now = time.time()
-        interval = random.uniform(_MIN_REQUEST_INTERVAL * 0.7, _MIN_REQUEST_INTERVAL * 1.3)
-        wait = (_state.last_request_time + interval) - now
-        if wait > 0:
-            time.sleep(wait)
-        _state.last_request_time = time.time()
+    """Pause briefly (with jitter) since the previous request, so
+    consecutive fetches don't fire back-to-back."""
+    now = time.time()
+    interval = random.uniform(_MIN_REQUEST_INTERVAL * 0.7, _MIN_REQUEST_INTERVAL * 1.3)
+    wait = (_state.last_request_time + interval) - now
+    if wait > 0:
+        time.sleep(wait)
+    _state.last_request_time = time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -187,20 +165,6 @@ def _wait_until(driver, condition_met, description: str, timeout: float, poll: f
     print(f"  [eBay/Selenium] ⏱️ Timed out after {timeout / 60:.0f} min.")
     return False
 
-
-# ---------------------------------------------------------------------------
-# curl_cffi session (fast path)
-# ---------------------------------------------------------------------------
-
-_REQUEST_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-}
 
 # Phrases that indicate eBay served an anti-bot interstitial instead of real
 # results.
@@ -236,121 +200,47 @@ def _load_cookies_from_disk() -> list[dict]:
     ]
 
 
-def _iter_cookie_objects(session):
-    """Yield real cookie objects (with .name/.value/.domain/.path/.expires)
-    from a curl_cffi session. Iterating `session.cookies` directly yields
-    cookie *names* (plain strings) in curl_cffi, not cookie objects -- the
-    actual http.cookiejar.Cookie objects live on the underlying `.jar`."""
-    jar = getattr(session.cookies, "jar", None)
-    if jar is not None:
-        return list(jar)
-    return list(session.cookies)  # fallback, in case that ever changes
-
-
-def _save_cookies_to_disk() -> None:
-    """Persist the pool's current cookies to disk so the *next* run can
-    start already trusted. Best-effort -- a failure here should never
-    interrupt a scrape that's otherwise working fine."""
-    if not _state.curl_sessions:
+def _save_selenium_cookies_to_disk(driver) -> None:
+    """Persist the browser's current cookies to disk so the *next* run (or
+    a relaunch within this run) can start already trusted. Best-effort --
+    a failure here should never interrupt a scrape that's otherwise
+    working fine."""
+    try:
+        cookies = driver.get_cookies()
+    except Exception as exc:
+        print(f"  [eBay] Could not read cookies from browser (non-fatal): {exc}")
+        return
+    if not cookies:
         return
     try:
-        cookies = [
-            {"name": c.name, "value": c.value, "domain": c.domain, "path": c.path, "expires": c.expires}
-            # All sessions in the pool carry the same cookies (kept in
-            # sync by `_sync_selenium_cookies_to_cffi`), so the first one
-            # is representative.
-            for c in _iter_cookie_objects(_state.curl_sessions[0])
+        # Selenium cookie dicts use "expiry"; normalize to "expires" so the
+        # cache format matches what _load_cookies_from_disk() expects.
+        normalized = [
+            {
+                "name": c.get("name"),
+                "value": c.get("value"),
+                "domain": c.get("domain", ".ebay.com"),
+                "path": c.get("path", "/"),
+                "expires": c.get("expiry"),
+            }
+            for c in cookies
         ]
-        if not cookies:
-            return
         with open(_COOKIE_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump({"saved_at": time.time(), "cookies": cookies}, f)
+            json.dump({"saved_at": time.time(), "cookies": normalized}, f)
     except Exception as exc:
         print(f"  [eBay] Cookie cache save failed (non-fatal): {exc}")
 
 
-def _init_curl_pool() -> "queue.Queue[cffi_requests.Session]":
-    """Return the shared pool of curl_cffi sessions, creating and warming
-    up `_CURL_POOL_SIZE` of them on first call. Each session only ever
-    handles one request at a time (see `_try_curl_fetch`), so a pool of N
-    sessions is what actually lets N requests run concurrently -- a single
-    shared Session object isn't a safe thing to hit from multiple threads
-    at once."""
-    if _state.curl_pool is not None:
-        return _state.curl_pool
-
-    with _state.curl_pool_lock:
-        if _state.curl_pool is None:
-            cached_cookies = _load_cookies_from_disk()
-            if cached_cookies:
-                print(f"  [eBay] Reusing {len(cached_cookies)} cookie(s) saved from a previous run.")
-
-            print(f"  [eBay] Warming up {_CURL_POOL_SIZE} HTTP session(s)...")
-            pool: "queue.Queue[cffi_requests.Session]" = queue.Queue()
-            for _ in range(_CURL_POOL_SIZE):
-                sess = cffi_requests.Session(impersonate="chrome124")
-                # Apply cached cookies BEFORE the warm-up request, so that
-                # request itself already carries prior trust -- this is
-                # what lets a run skip the block/Selenium step entirely
-                # when the cache is still fresh.
-                for c in cached_cookies:
-                    sess.cookies.set(c["name"], c["value"], domain=c.get("domain", ".ebay.com"), path=c.get("path", "/"))
-                try:
-                    sess.get("https://www.ebay.com/", headers=_REQUEST_HEADERS, timeout=15)
-                except Exception as exc:
-                    print(f"  [eBay] Warm-up warning: {exc}")
-                _state.curl_sessions.append(sess)
-                pool.put(sess)
-            print("  [eBay] Sessions ready.")
-            _state.curl_pool = pool
-
-    return _state.curl_pool
-
-
 def close_ebay_session() -> None:
-    # Save whatever trust this run accumulated (including ordinary cookies
-    # picked up along the way, not just ones from a Selenium unblock) so
-    # the next run can start from it.
-    _save_cookies_to_disk()
-    for sess in _state.curl_sessions:
-        try:
-            sess.close()
-        except Exception:
-            pass
-    _state.curl_sessions = []
-    _state.curl_pool = None
-
-
-def _sync_selenium_cookies_to_cffi(driver) -> None:
-    """Copy the Selenium browser's current cookies into every curl_cffi
-    session in the pool, so the trust it just earned (clearing an
-    interstitial, a solved hCaptcha, or a manual sign-in) can be reused by
-    the fast HTTP path instead of staying on the browser for the rest of
-    the run."""
-    if not _state.curl_sessions:
-        _init_curl_pool()
-    try:
-        cookies = driver.get_cookies()
-        for sess in _state.curl_sessions:
-            for c in cookies:
-                sess.cookies.set(
-                    c["name"],
-                    c["value"],
-                    domain=c.get("domain", ".ebay.com"),
-                    path=c.get("path", "/"),
-                )
-        print(f"  [eBay] Synced {len(cookies)} cookies from Selenium -> {len(_state.curl_sessions)} curl_cffi session(s).")
-        # This is the most valuable trust we'll earn all run (it usually
-        # means a human just solved a captcha or signed in) -- persist it
-        # immediately rather than waiting for close_ebay_session(), in
-        # case the process gets killed before a clean shutdown.
-        _save_cookies_to_disk()
-    except Exception as exc:
-        print(f"  [eBay] Cookie sync failed: {exc}")
+    """Persist cookies from the browser (if one is open) and quit it. Call
+    this once at the end of a run."""
+    if _state.driver is not None:
+        _save_selenium_cookies_to_disk(_state.driver)
+    close_selenium_driver()
 
 
 # ---------------------------------------------------------------------------
-# Selenium fallback (used once curl_cffi gets blocked)
+# Selenium browser (the only fetch path)
 # ---------------------------------------------------------------------------
 
 _SELENIUM_PROFILE_DIR = os.path.join(os.path.expanduser("~"), ".ebay_scraper_chrome_profile")
@@ -360,7 +250,7 @@ _MANUAL_SIGNIN_TIMEOUT = 900.0    # seconds to wait for you to sign in (visible 
 
 
 def _is_headless() -> bool:
-    """Whether the Selenium fallback should launch headless.
+    """Whether the browser should launch headless.
 
     Controlled by the ``EBAY_HEADLESS`` environment variable (``"1"`` =
     headless, anything else/unset = visible). Defaults to visible (False)
@@ -483,13 +373,13 @@ def close_selenium_driver() -> None:
 
 
 def _apply_cached_cookies_to_selenium(driver) -> None:
-    """Inject the same disk-cached cookies the curl_cffi pool uses into
-    the browser, on top of whatever its persistent Chrome profile already
-    carries. Gives a freshly launched/relaunched driver a head start
-    instead of relying solely on the profile dir -- useful the first time
-    a profile is created, or if it's ever wiped. Must be called after the
-    driver has already loaded an ebay.com page at least once (Selenium can
-    only set cookies for the domain of the page currently loaded)."""
+    """Inject the same disk-cached cookies into the browser, on top of
+    whatever its persistent Chrome profile already carries. Gives a
+    freshly launched/relaunched driver a head start instead of relying
+    solely on the profile dir -- useful the first time a profile is
+    created, or if it's ever wiped. Must be called after the driver has
+    already loaded an ebay.com page at least once (Selenium can only set
+    cookies for the domain of the page currently loaded)."""
     cached = _load_cookies_from_disk()
     if not cached:
         return
@@ -523,9 +413,9 @@ def _selenium_fetch(url: str) -> str:
     page source, waiting out any interstitial, sign-in flow (including
     2FA), or hCaptcha first. In visible mode, hCaptcha/sign-in waits are
     for a human to act; in headless mode (`_is_headless()`), there is no
-    human, so those waits will simply time out and the request returns
-    whatever blocked/incomplete page eBay served. Must be called while
-    holding `_state.lock`.
+    human, so those waits are skipped and the request returns whatever
+    blocked/incomplete page eBay served. Must be called while holding
+    `_state.lock`.
     """
     driver = _get_selenium_driver()
     headless = _is_headless()
@@ -607,90 +497,22 @@ def _selenium_fetch(url: str) -> str:
     return driver.page_source
 
 
-# ---------------------------------------------------------------------------
-# The one fetch function everything else calls
-# ---------------------------------------------------------------------------
-
-def _try_curl_fetch(url: str) -> str | None:
-    """Attempt the fast curl_cffi path using one session checked out of the
-    pool -- `pool.get()` blocks if all `_CURL_POOL_SIZE` sessions are
-    currently busy, which is what caps concurrency; it does NOT require
-    `_state.lock`, so up to `_CURL_POOL_SIZE` of these can genuinely run at
-    once across threads. Returns the page HTML on success, or None if it
-    was blocked / errored (caller should fall back to the browser)."""
-    pool = _init_curl_pool()
-    session = pool.get()
-    try:
-        resp = session.get(
-            url,
-            headers={**_REQUEST_HEADERS, "Referer": "https://www.ebay.com/"},
-            timeout=20,
-        )
-        text_lower = resp.text.lower()
-        blocked = any(p in text_lower for p in _BLOCK_PHRASES) or resp.status_code != 200
-        if not blocked:
-            return resp.text
-        print("  [eBay] 🚨 Blocked -- falling back to the browser for this request.")
-        return None
-    except Exception as exc:
-        print(f"  [eBay] Request error ({exc}) -- falling back to the browser.")
-        return None
-    finally:
-        pool.put(session)
-
-
-def _run_selenium_and_maybe_handback(url: str) -> str:
-    """Drive the Selenium browser for *url*, then hand control back to
-    curl_cffi if the page came back clean. Must be called while holding
-    `_state.lock` -- there's exactly one browser instance, so this whole
-    step is intentionally exclusive, unlike the curl_cffi path."""
-    _stagger()
-    html = _selenium_fetch(url)
-    blocked = any(p in html.lower() for p in _BLOCK_PHRASES)
-    if not blocked:
-        # Selenium cleared whatever triggered the fallback -- hand control
-        # back to curl_cffi for future requests, carrying over the
-        # cookies/trust it just earned. The browser itself stays open
-        # (not closed) so that IF curl_cffi gets blocked again later in
-        # this same run, we can reuse it instantly instead of paying a
-        # fresh Chrome launch -- that launch/relaunch cost is the actual
-        # slow part, not having a browser open in the background.
-        _sync_selenium_cookies_to_cffi(_state.driver)
-        _state.use_selenium = False
-        print("  [eBay] Handing back to curl_cffi for future requests.")
-    return html
-
-
 def _fetch_page(url: str) -> str:
-    if _state.use_selenium:
-        with _state.lock:
-            # Re-check inside the lock: another thread may have already
-            # handed control back to curl_cffi while we were waiting for
-            # it, in which case we fall through to the curl path below
-            # instead of needlessly driving the browser.
-            if _state.use_selenium:
-                return _run_selenium_and_maybe_handback(url)
-
-    _stagger()
-    html = _try_curl_fetch(url)
-    if html is not None:
-        return html
-
-    # Before paying for a Chrome launch: try curl_cffi once more. With
-    # several sessions running concurrently, it's common for another
-    # thread to have just refreshed the pool's cookies (via its own sync,
-    # or from the disk cache) while this request was in flight -- a quick
-    # second attempt with those cookies often clears a transient block
-    # without ever touching the browser.
-    _stagger()
-    html = _try_curl_fetch(url)
-    if html is not None:
-        print("  [eBay] Second attempt cleared it with existing cookies -- no browser needed.")
-        return html
-
+    """Fetch *url* via the shared Selenium browser -- the only fetch path
+    now (see module docstring). Runs fully under `_state.lock`, so
+    concurrent callers serialize rather than overlapping; see the
+    "Concurrency" section of the module docstring."""
     with _state.lock:
-        _state.use_selenium = True
-        return _run_selenium_and_maybe_handback(url)
+        _stagger()
+        html = _selenium_fetch(url)
+        # Persist cookies after every fetch, not just at shutdown -- if the
+        # process dies mid-run, whatever trust was earned this request is
+        # still saved for next time. Cheap enough to not worry about doing
+        # it every request.
+        driver = _state.driver
+        if driver is not None:
+            _save_selenium_cookies_to_disk(driver)
+        return html
 
 
 # ---------------------------------------------------------------------------
@@ -900,10 +722,10 @@ def _parse_prices_from_html(html: str, query: str, inclusion_keywords: list[str]
 def _fetch_prices_from_url(search_url: str, query: str, max_retries: int = 3, inclusion_keywords: list[str] | None = None) -> tuple[list[float], list[str], int]:
     """
     Fetch *search_url* and extract sold prices, retrying a small, fixed
-    number of times on genuine errors or an unrecognized page. Blocking is
-    handled transparently inside `_fetch_page` (curl_cffi -> browser
-    fallback), so this function doesn't need to know or care which path
-    actually served the page.
+    number of times on genuine errors or an unrecognized page. Blocking
+    (interstitials, captchas, sign-in walls) is handled transparently
+    inside `_fetch_page` / `_selenium_fetch`, so this function doesn't need
+    to know or care about any of that.
     """
     for attempt in range(max_retries):
         try:
@@ -1013,7 +835,7 @@ def scrape_ebay_comps(
     Scrape eBay sold listings for *query* and return a comps summary.
 
     The ``driver`` parameter is accepted but ignored -- scraping now
-    manages its own HTTP/browser fetching internally (see `_fetch_page`).
+    manages its own shared Selenium browser internally (see `_fetch_page`).
 
     Uses a 4-level progressive fallback to guarantee results:
 
