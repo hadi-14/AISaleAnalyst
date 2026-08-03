@@ -1,6 +1,6 @@
-from .EstateSalesNet import ProcessSaleUrl as ProcessEstateSaleNetUrl
-from .MaxSold import ProcessSaleUrl as ProcessMaxSoldUrl
-from .EstateSalesOrg import ProcessSaleUrl as ProcessEstateSalesOrgUrl
+from scrapers.EstateSalesNet import ProcessSaleUrl as ProcessEstateSaleNetUrl
+from scrapers.MaxSold import ProcessSaleUrl as ProcessMaxSoldUrl
+from scrapers.EstateSalesOrg import ProcessSaleUrl as ProcessEstateSalesOrgUrl
 
 import argparse
 

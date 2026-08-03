@@ -12,6 +12,21 @@ The script prompts for an estate-sale listing URL, downloads images via
 AI model, deduplicates results, fetches eBay sold-listing comps, and
 writes a self-contained HTML report.
 
+Programmatic use (webapp.py)
+-----------------------------
+``main()`` can also be called directly instead of run from the CLI, e.g.
+from ``webapp.py``:
+
+    main(url_override="https://www.estatesales.net/...", non_interactive=True)
+
+- ``url_override`` supplies the listing URL instead of an ``input()`` prompt.
+- ``non_interactive=True`` suppresses the "resume from previous run?" prompt
+  and auto-resumes from any existing progress file instead (safer default
+  for an unattended web request than silently discarding partial progress).
+- On success, ``main()`` returns the path to the generated HTML report
+  (``str``), or ``None`` if the pipeline stopped early (no images found,
+  nothing identified, etc).
+
 Pipeline
 --------
 1. **Vision pass** — :func:`core.vision.analyze_image` sends each image
@@ -31,6 +46,7 @@ Project layout
 
     AISaleAnalyst/
     ├── main.py             ← you are here
+    ├── webapp.py           ← optional web UI (submit URLs, watch status, view reports)
     ├── core/               ← business logic
     │   ├── config.py
     │   ├── vision.py
@@ -58,7 +74,7 @@ from core.deduplication import deduplicate, post_dedup_verify
 from core.ebay import scrape_ebay_comps, close_ebay_session
 from core.report import generate_report
 from core.vision import analyze_image
-from scrapers.ListingExtractor import identifySite
+from ListingExtractor import identifySite
 
 # ---------------------------------------------------------------------------
 # Duplicates Excel report generator
@@ -186,9 +202,33 @@ def _generate_duplicates_xlsx(
 # ---------------------------------------------------------------------------
 
 
-def main(max_images_override: int | None = None) -> None:
+def main(
+    max_images_override: int | None = None,
+    url_override: str | None = None,
+    non_interactive: bool = False,
+) -> str | None:
     """
     Run the full AISaleAnalyst pipeline end-to-end.
+
+    Parameters
+    ----------
+    max_images_override:
+        Temporarily override ``core.config.MAX_IMAGES`` for this run.
+    url_override:
+        Estate listing URL to process. If given, the interactive
+        ``input("Enter Estate listing URL: ")`` prompt is skipped — this is
+        what lets ``webapp.py`` (or any other caller) drive the pipeline
+        without a terminal attached.
+    non_interactive:
+        If True, suppress the "resume from previous run?" prompt and
+        auto-resume from any existing progress file instead of asking.
+        Set this whenever ``main()`` is called from a non-terminal context.
+
+    Returns
+    -------
+    str | None
+        Path to the generated HTML report, or None if the pipeline
+        stopped early (no images found / nothing identified).
 
     Steps
     -----
@@ -218,8 +258,11 @@ def main(max_images_override: int | None = None) -> None:
     images_folder = IMAGES_FOLDER
     url = None
     if images_folder is None:
-        url           = input("Enter Estate listing URL: ").strip()
-        
+        if url_override:
+            url = url_override.strip()
+        else:
+            url = input("Enter Estate listing URL: ").strip()
+
         # Determine the target output folder based on URL domain
         if "estatesales.net" in url:
             target_folder = "EstateSaleNetOutput"
@@ -229,14 +272,14 @@ def main(max_images_override: int | None = None) -> None:
             target_folder = "MaxSoldOutput"
         else:
             raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")
-            
+
         import shutil
         if Path(target_folder).exists():
             print(f"Clearing old data from '{target_folder}'...")
             shutil.rmtree(target_folder, ignore_errors=True)
-            
+
         images_folder = identifySite(url, max_images=effective_max)
-        
+
         last_url_file = Path(target_folder) / "last_url.txt"
         # Save the last URL to the directory for future runs
         try:
@@ -254,14 +297,14 @@ def main(max_images_override: int | None = None) -> None:
 
     folder      = Path(images_folder)
     extensions  = {".jpg", ".jpeg", ".png", ".webp"}
-    
+
     image_files = sorted(
         f for f in folder.iterdir() if f.suffix.lower() in extensions
     )[:effective_max]
 
     if not image_files:
         print(f"No images found in {images_folder}")
-        return
+        return None
 
     print(f"Found {len(image_files)} images. Starting analysis...\n")
 
@@ -269,7 +312,13 @@ def main(max_images_override: int | None = None) -> None:
     progress_file = folder / "vision_progress.json"
     cached_data = {}
     if progress_file.exists():
-        ans = input(f"Found existing progress file '{progress_file.name}'. Resume from previous run? (y/n) [n]: ").strip().lower()
+        if non_interactive:
+            # No terminal to ask from (e.g. driven by webapp.py) — resuming
+            # is the safer default over silently discarding partial progress.
+            ans = 'y'
+            print(f"Found existing progress file '{progress_file.name}'. Auto-resuming (non-interactive mode).")
+        else:
+            ans = input(f"Found existing progress file '{progress_file.name}'. Resume from previous run? (y/n) [n]: ").strip().lower()
         if ans == 'y':
             try:
                 with open(progress_file, "r", encoding="utf-8") as f:
@@ -283,7 +332,7 @@ def main(max_images_override: int | None = None) -> None:
 
     raw_results: list[dict] = []
     skipped_results: list[dict] = []
-    
+
     # Process cached entries
     images_to_analyze = []
     for img_path in image_files:
@@ -300,7 +349,7 @@ def main(max_images_override: int | None = None) -> None:
     # If there are new images to analyze, process them in parallel
     if images_to_analyze:
         print(f"Starting parallel analysis of {len(images_to_analyze)} remaining images with {VISION_WORKERS} workers...\n")
-        
+
         results_lock = threading.Lock()
         counter = len(cached_data)
         total_images = len(image_files)
@@ -309,10 +358,10 @@ def main(max_images_override: int | None = None) -> None:
             nonlocal counter
             # Stagger startup times slightly to avoid immediate rate limit spikes
             time.sleep((index % VISION_WORKERS) * 0.15)
-            
+
             ai_result = analyze_image(str(img_path))
             thumb_data = image_to_base64(str(img_path))
-            
+
             with results_lock:
                 counter += 1
                 if ai_result.get("skip"):
@@ -340,7 +389,7 @@ def main(max_images_override: int | None = None) -> None:
                         "ai":    ai_result,
                         "thumb": thumb_data,
                     })
-                
+
                 # Save progress incrementally to disk
                 all_progress = raw_results + skipped_results
                 try:
@@ -353,7 +402,7 @@ def main(max_images_override: int | None = None) -> None:
         task_queue = queue.Queue()
         for idx, img_path in enumerate(images_to_analyze):
             task_queue.put((idx, img_path))
-            
+
         def worker():
             while True:
                 try:
@@ -366,14 +415,14 @@ def main(max_images_override: int | None = None) -> None:
                     print(f"  Thread exception: {exc}")
                 finally:
                     task_queue.task_done()
-                    
+
         threads = []
         for _ in range(VISION_WORKERS):
             t = threading.Thread(target=worker)
             t.daemon = True
             t.start()
             threads.append(t)
-            
+
         try:
             for t in threads:
                 while t.is_alive():
@@ -386,6 +435,10 @@ def main(max_images_override: int | None = None) -> None:
                     task_queue.get_nowait()
                 except queue.Empty:
                     break
+            if non_interactive:
+                # Called programmatically (webapp.py) — raise instead of
+                # killing the whole process out from under the caller.
+                raise
             import sys
             sys.exit(1)
     else:
@@ -393,7 +446,7 @@ def main(max_images_override: int | None = None) -> None:
 
     if not raw_results:
         print("No items identified from images.")
-        return
+        return None
 
     # --- Step 2: Deduplication
     if USE_DEDUP:
@@ -408,11 +461,11 @@ def main(max_images_override: int | None = None) -> None:
 
     # --- Step 3: eBay comps (Multi-threaded HTTP workers)
     print(f"\nFetching eBay comps for {len(unique_results)} unique items across {EBAY_WORKERS} parallel workers...\n")
-    
+
     comp_counter = 0
     total_unique = len(unique_results)
     print_lock = threading.Lock()
-    
+
     import queue
     ebay_queue = queue.Queue()
     for item in unique_results:
@@ -421,7 +474,7 @@ def main(max_images_override: int | None = None) -> None:
 
     def process_ebay_item(item):
         nonlocal comp_counter
-        
+
         query          = item["ai"].get("ebay_search_query") or item["ai"].get("item_name", "")
         item_name      = item["ai"].get("item_name", "")
         ai_val_low     = float(item["ai"].get("ai_value_low", 0) or 0)
@@ -440,7 +493,7 @@ def main(max_images_override: int | None = None) -> None:
             inclusion_keywords=inclusion_keywords,
             exclusion_keywords=exclusion_keywords,
         )
-        
+
         # Requeue once on 0 results so that collateral victims of a soft-block get retried
         if comps_res["count"] == 0 and item.get("_retries", 0) < 1:
             item["_retries"] += 1
@@ -465,7 +518,7 @@ def main(max_images_override: int | None = None) -> None:
                 item = ebay_queue.get_nowait()
             except queue.Empty:
                 break
-                
+
             try:
                 process_ebay_item(item)
             except Exception as exc:
@@ -487,6 +540,7 @@ def main(max_images_override: int | None = None) -> None:
     from datetime import datetime
 
     sale_info = {}
+    sale_id = "Unknown"
     links_file = Path(images_folder) / "links.json"
     if links_file.exists():
         try:
@@ -511,7 +565,7 @@ def main(max_images_override: int | None = None) -> None:
         import re
         safe_company = re.sub(r'[^A-Za-z0-9]', '', sale_info["company"])[:25]
         safe_city = re.sub(r'[^A-Za-z0-9]', '', sale_info["city"])[:20]
-        
+
         dates_str = ""
         if sale_info.get("start_date"):
             try:
@@ -523,21 +577,21 @@ def main(max_images_override: int | None = None) -> None:
                     dates_str += f"-{e_date.strftime('%d')}"
             except Exception:
                 pass
-                
+
         parts = [p for p in [safe_company, safe_city] if p]
         if parts:
             filename_prefix = "_".join(parts) + dates_str
 
     current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
-    
+
     # Check if a custom report directory is provided in the environment
     from core.config import REPORT_OUTPUT_DIR, EMAIL_REPORTS
-    
+
     if REPORT_OUTPUT_DIR:
         out_dir = Path(REPORT_OUTPUT_DIR)
     else:
         out_dir = Path(OUTPUT_FOLDER)
-        
+
     # Ensure output folder exists
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -560,9 +614,11 @@ def main(max_images_override: int | None = None) -> None:
     if EMAIL_REPORTS:
         from core.email_sender import send_report_email
         send_report_email(final_output_path, url=url, items=unique_results)
-    
+
     # Close the shared curl_cffi session to allow clean exit of the Python process
     close_ebay_session()
+
+    return final_output_path
 
 
 if __name__ == "__main__":
@@ -572,6 +628,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AISaleAnalyst")
     parser.add_argument("--max-images", type=int, default=None, help="Temporarily override MAX_IMAGES from .env")
     parser.add_argument("--dev", action="store_true", help="Enable development testing mode (cheaper AI model, capped items, no emails)")
+    parser.add_argument("--url", type=str, default=None, help="Estate listing URL (skips the interactive prompt)")
+    parser.add_argument("--non-interactive", action="store_true", help="Never prompt for input (auto-resume any existing progress file)")
     args = parser.parse_args()
 
     start_dt = datetime.now()
@@ -579,7 +637,11 @@ if __name__ == "__main__":
     print(f"Start time: {start_dt.strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
-        main(max_images_override=args.max_images)
+        main(
+            max_images_override=args.max_images,
+            url_override=args.url,
+            non_interactive=args.non_interactive,
+        )
     finally:
         end_dt = datetime.now()
         elapsed = time.time() - start_ts

@@ -8,15 +8,34 @@ Strategy, in plain terms
 1. Try a fast, browser-less request via ``curl_cffi`` (Chrome TLS
    impersonation). This works most of the time and is cheap.
 2. If eBay serves an anti-bot block (PerimeterX interstitial or an
-   hCaptcha), fall back to a real, visible Chrome browser
+   hCaptcha), fall back to a real Chrome browser
    (``undetected_chromedriver``). If it's just the plain interstitial, it
-   usually clears itself in a few seconds. If it's an hCaptcha, the script
-   waits for YOU to solve it by hand in that window -- nothing here
-   auto-solves captchas.
+   usually clears itself in a few seconds. If it's an hCaptcha and the
+   browser is running visibly (the default, CLI use), the script waits for
+   YOU to solve it by hand in that window -- nothing here auto-solves
+   captchas. If the browser is running headless (see "Headless mode"
+   below), there is nobody to solve it and that request will simply come
+   back blocked.
 3. Once the browser has cleared a block, we just keep using that same
    browser for every request for the rest of the run (curl_cffi's cookies
    don't transfer reliably once eBay has escalated to hCaptcha, so there's
    no point trying to hand things back).
+
+Headless mode
+-------------
+By default the Selenium fallback launches a *visible* Chrome window, since
+solving an hCaptcha or a sign-in/2FA flow requires a human looking at the
+screen. When AISaleAnalyst is driven from ``webapp.py`` (no desktop/display
+attached, e.g. a server), set the environment variable ``EBAY_HEADLESS=1``
+before the run starts and the Selenium fallback will launch headless
+instead. ``webapp.py`` does this automatically.
+
+**Trade-off:** in headless mode, any hCaptcha or eBay sign-in wall cannot
+be solved by a human. Those requests will simply fail (return 0 comps for
+that item) rather than pausing for manual input. Headless mode is
+appropriate for unattended/server use where the fast ``curl_cffi`` path
+handles the bulk of requests and occasional blocked items are acceptable;
+it's not a fix for eBay blocking outright.
 
 Two different concurrency rules apply depending on which path is active:
 - curl_cffi (the normal case): a small pool of sessions (`_CURL_POOL_SIZE`)
@@ -24,11 +43,11 @@ Two different concurrency rules apply depending on which path is active:
   so they don't all fire in the same instant. This is what lets N parallel
   workers actually get N-way parallelism on the eBay side, instead of every
   worker queuing behind a single global request-at-a-time gate.
-- Selenium (only once curl_cffi gets blocked): there's exactly one visible
-  browser, so that part *is* fully exclusive behind `_state.lock` --
-  including holding the lock through a manual captcha/sign-in solve, which
-  is exactly the behavior we want (nothing else touches eBay while you're
-  solving it).
+- Selenium (only once curl_cffi gets blocked): there's exactly one browser
+  instance, so that part *is* fully exclusive behind `_state.lock` --
+  including holding the lock through a manual captcha/sign-in solve (when
+  running visibly), which is exactly the behavior we want (nothing else
+  touches eBay while you're solving it).
 
 Public API
 ----------
@@ -64,7 +83,7 @@ else:
 # ---------------------------------------------------------------------------
 # Shared scraper state
 # ---------------------------------------------------------------------------
-# `lock` guards the Selenium side only (one visible browser => fully
+# `lock` guards the Selenium side only (one browser instance => fully
 # exclusive while it's active). The curl_cffi side does NOT use `lock` for
 # individual requests -- it uses `curl_pool` (a small pool of sessions,
 # capped concurrency) plus `_stagger()` for spacing, so several requests
@@ -336,9 +355,25 @@ def _sync_selenium_cookies_to_cffi(driver) -> None:
 
 _SELENIUM_PROFILE_DIR = os.path.join(os.path.expanduser("~"), ".ebay_scraper_chrome_profile")
 _SELENIUM_WAIT_TIMEOUT = 25.0     # seconds to wait for a plain interstitial to auto-clear
-_SELENIUM_HEADLESS = False        # must stay False -- you need to see/click any hCaptcha, or sign in / enter a 2FA code
-_MANUAL_CAPTCHA_TIMEOUT = 600.0   # seconds to wait for you to manually solve an hCaptcha
-_MANUAL_SIGNIN_TIMEOUT = 900.0    # seconds to wait for you to sign in (email + password + 2FA code all take longer than a captcha)
+_MANUAL_CAPTCHA_TIMEOUT = 600.0   # seconds to wait for you to manually solve an hCaptcha (visible mode only)
+_MANUAL_SIGNIN_TIMEOUT = 900.0    # seconds to wait for you to sign in (visible mode only; email + password + 2FA all take longer than a captcha)
+
+
+def _is_headless() -> bool:
+    """Whether the Selenium fallback should launch headless.
+
+    Controlled by the ``EBAY_HEADLESS`` environment variable (``"1"`` =
+    headless, anything else/unset = visible). Defaults to visible (False)
+    because that's the only mode where a human can solve an hCaptcha or
+    complete a sign-in/2FA flow -- CLI use of main.py should almost always
+    leave this unset. ``webapp.py`` sets ``EBAY_HEADLESS=1`` before running
+    the pipeline, since a server has no display for a human to use anyway.
+
+    Read dynamically (not cached at import time) so a caller like
+    webapp.py can set the env var right before invoking the pipeline,
+    without needing to reload this module.
+    """
+    return os.environ.get("EBAY_HEADLESS", "0") == "1"
 
 
 def _page_has_hcaptcha(driver) -> bool:
@@ -385,9 +420,12 @@ def _driver_is_alive(driver) -> bool:
 
 
 def _get_selenium_driver():
-    """Return the shared, persistent (visible) Chrome driver, launching it
-    (or relaunching it, if the previous one crashed) as needed. Must be
-    called while holding `_state.lock`."""
+    """Return the shared, persistent Chrome driver, launching it (or
+    relaunching it, if the previous one crashed) as needed. Must be called
+    while holding `_state.lock`.
+
+    Launches visible or headless depending on `_is_headless()` -- see that
+    function's docstring for the trade-off."""
     if _state.driver is not None and _driver_is_alive(_state.driver):
         return _state.driver
 
@@ -411,10 +449,19 @@ def _get_selenium_driver():
     options.add_argument("--profile-directory=Default")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--window-size=1280,900")
-    if _SELENIUM_HEADLESS:
-        options.add_argument("--headless=new")
 
-    print("  [eBay/Selenium] Launching Chrome...")
+    headless = _is_headless()
+    if headless:
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        print(
+            "  [eBay/Selenium] Launching Chrome in HEADLESS mode (EBAY_HEADLESS=1). "
+            "Any hCaptcha or sign-in wall hit in this mode cannot be solved by a "
+            "human and will fail instead of pausing."
+        )
+    else:
+        print("  [eBay/Selenium] Launching Chrome (visible)...")
+
     _state.driver = uc.Chrome(
         options=options,
         version_main=int(chrome_version.get_chrome_version().split(".")[0]),
@@ -474,10 +521,14 @@ def _selenium_fetch(url: str) -> str:
     """
     Navigate to *url* with the persistent browser and return its final
     page source, waiting out any interstitial, sign-in flow (including
-    2FA), or manually-solved hCaptcha first. Must be called while holding
-    `_state.lock`.
+    2FA), or hCaptcha first. In visible mode, hCaptcha/sign-in waits are
+    for a human to act; in headless mode (`_is_headless()`), there is no
+    human, so those waits will simply time out and the request returns
+    whatever blocked/incomplete page eBay served. Must be called while
+    holding `_state.lock`.
     """
     driver = _get_selenium_driver()
+    headless = _is_headless()
 
     if not _state.selenium_warmed_up:
         _selenium_visit_homepage(driver)
@@ -489,30 +540,40 @@ def _selenium_fetch(url: str) -> str:
     # single homepage re-warm can clear the "session looks too new" case,
     # but if it's still there after that, it genuinely wants you signed
     # in. Because the browser profile persists (`_SELENIUM_PROFILE_DIR`),
-    # you only need to sign in once -- future runs stay logged in.
+    # you only need to sign in once (in visible mode) -- future runs, even
+    # headless ones, stay logged in against the same profile dir.
     if _page_is_signin_wall(driver):
         print("  [eBay/Selenium] Hit the sign-in wall -- re-warming via the homepage and retrying once.")
         _selenium_visit_homepage(driver)
         driver.get(url)
 
     if _page_is_signin_wall(driver):
-        print(
-            "  [eBay/Selenium] 🔑 eBay wants you signed in to view sold listings. "
-            "Please sign in (including any 2FA/verification step) in the open Chrome "
-            "window -- this only needs doing once, the browser profile remembers it "
-            "after that."
-        )
-        signed_in = _wait_until(
-            driver,
-            condition_met=lambda d: not _page_is_signin_wall(d),
-            description="Waiting for sign-in (email, password, and any 2FA code) to complete",
-            timeout=_MANUAL_SIGNIN_TIMEOUT,
-        )
-        if signed_in:
-            # eBay usually lands you on the homepage or your account page
-            # after sign-in finishes, not the search URL we actually
-            # wanted -- go get it now that we're authenticated.
-            driver.get(url)
+        if headless:
+            print(
+                "  [eBay/Selenium] 🔑 eBay wants a signed-in session for sold listings, but "
+                "Chrome is running headless -- nobody can sign in here. Skipping the wait; "
+                "this request will likely come back with 0 comps. Sign in once from a "
+                "visible (non-headless) run against the same Chrome profile to fix this "
+                "for future headless runs too."
+            )
+        else:
+            print(
+                "  [eBay/Selenium] 🔑 eBay wants you signed in to view sold listings. "
+                "Please sign in (including any 2FA/verification step) in the open Chrome "
+                "window -- this only needs doing once, the browser profile remembers it "
+                "after that."
+            )
+            signed_in = _wait_until(
+                driver,
+                condition_met=lambda d: not _page_is_signin_wall(d),
+                description="Waiting for sign-in (email, password, and any 2FA code) to complete",
+                timeout=_MANUAL_SIGNIN_TIMEOUT,
+            )
+            if signed_in:
+                # eBay usually lands you on the homepage or your account page
+                # after sign-in finishes, not the search URL we actually
+                # wanted -- go get it now that we're authenticated.
+                driver.get(url)
 
     # Plain interstitial: give it a short while to clear on its own.
     waited = 0.0
@@ -525,15 +586,23 @@ def _selenium_fetch(url: str) -> str:
         time.sleep(1.5)
         waited += 1.5
 
-    # hCaptcha: wait for a human to solve it. No auto-solving.
+    # hCaptcha: in visible mode, wait for a human to solve it (no
+    # auto-solving). In headless mode, there's nobody to solve it, so
+    # don't burn the full timeout waiting -- just log and move on.
     if _page_has_hcaptcha(driver):
-        print("  [eBay/Selenium] 🧩 hCaptcha detected -- please solve it in the open Chrome window.")
-        _wait_until(
-            driver,
-            condition_met=lambda d: not _page_has_hcaptcha(d) and "pardon our interruption" not in (d.title or "").lower(),
-            description="Waiting for the hCaptcha to be solved",
-            timeout=_MANUAL_CAPTCHA_TIMEOUT,
-        )
+        if headless:
+            print(
+                "  [eBay/Selenium] 🧩 hCaptcha detected, but Chrome is running headless -- "
+                "cannot be solved automatically. This request will likely come back blocked."
+            )
+        else:
+            print("  [eBay/Selenium] 🧩 hCaptcha detected -- please solve it in the open Chrome window.")
+            _wait_until(
+                driver,
+                condition_met=lambda d: not _page_has_hcaptcha(d) and "pardon our interruption" not in (d.title or "").lower(),
+                description="Waiting for the hCaptcha to be solved",
+                timeout=_MANUAL_CAPTCHA_TIMEOUT,
+            )
 
     return driver.page_source
 
@@ -573,7 +642,7 @@ def _try_curl_fetch(url: str) -> str | None:
 def _run_selenium_and_maybe_handback(url: str) -> str:
     """Drive the Selenium browser for *url*, then hand control back to
     curl_cffi if the page came back clean. Must be called while holding
-    `_state.lock` -- there's exactly one visible browser, so this whole
+    `_state.lock` -- there's exactly one browser instance, so this whole
     step is intentionally exclusive, unlike the curl_cffi path."""
     _stagger()
     html = _selenium_fetch(url)
