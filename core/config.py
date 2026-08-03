@@ -23,11 +23,13 @@ load_dotenv()
 # Environment variable helper functions
 # ---------------------------------------------------------------------------
 
+
 def _env_str(key: str, default: str | None = None) -> str | None:
     val = os.getenv(key)
     if val is None or val.strip() == "":
         return default
     return val.strip()
+
 
 def _env_int(key: str, default: int) -> int:
     val = os.getenv(key)
@@ -38,6 +40,7 @@ def _env_int(key: str, default: int) -> int:
     except ValueError:
         return default
 
+
 def _env_float(key: str, default: float) -> float:
     val = os.getenv(key)
     if val is None or val.strip() == "":
@@ -47,11 +50,13 @@ def _env_float(key: str, default: float) -> float:
     except ValueError:
         return default
 
+
 def _env_bool(key: str, default: bool) -> bool:
     val = os.getenv(key)
     if val is None or val.strip() == "":
         return default
     return val.strip().lower() in ("true", "1", "yes", "on")
+
 
 # ---------------------------------------------------------------------------
 # Tunable constants (loaded from environment / .env with fallback defaults)
@@ -60,10 +65,14 @@ def _env_bool(key: str, default: bool) -> bool:
 #: Development testing mode toggle. Swaps to a cheaper/faster model,
 #: caps items to 20, and disables emails to save API costs and inbox spam.
 import sys
+
 DEV_MODE: bool = "--dev" in sys.argv
 
-#: Which OpenAI model to use for vision/dedup tasks
-OPENAI_MODEL: str = "gpt-4o-mini" if DEV_MODE else "gpt-4o"
+#: Which OpenAI model to use for vision/dedup tasks.
+#: Read from .env, with separate defaults for dev and normal runs.
+DEV_OPENAI_MODEL: str = _env_str("DEV_OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
+NORMAL_OPENAI_MODEL: str = _env_str("NORMAL_OPENAI_MODEL", "gpt-4o") or "gpt-4o"
+OPENAI_MODEL: str = DEV_OPENAI_MODEL if DEV_MODE else NORMAL_OPENAI_MODEL
 
 #: Path to the folder that contains downloaded listing images.
 #: Set to None to prompt the user at runtime.
@@ -150,9 +159,9 @@ SHIP_MANUAL_DIMS: bool = _env_bool("SHIP_MANUAL_DIMS", False)
 
 #: Manual dimension overrides (inches / pounds). Only used when SHIP_MANUAL_DIMS=True.
 SHIP_MANUAL_LENGTH: float = _env_float("SHIP_MANUAL_LENGTH", 12.0)
-SHIP_MANUAL_WIDTH:  float = _env_float("SHIP_MANUAL_WIDTH",  10.0)
-SHIP_MANUAL_HEIGHT: float = _env_float("SHIP_MANUAL_HEIGHT",  8.0)
-SHIP_MANUAL_WEIGHT: float = _env_float("SHIP_MANUAL_WEIGHT",  3.0)
+SHIP_MANUAL_WIDTH: float = _env_float("SHIP_MANUAL_WIDTH", 10.0)
+SHIP_MANUAL_HEIGHT: float = _env_float("SHIP_MANUAL_HEIGHT", 8.0)
+SHIP_MANUAL_WEIGHT: float = _env_float("SHIP_MANUAL_WEIGHT", 3.0)
 
 # ---------------------------------------------------------------------------
 # Reporting and Email Config
@@ -183,11 +192,13 @@ AI_PROVIDER: str
 
 if OPENAI_API_KEY:
     from openai import OpenAI
+
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     AI_PROVIDER = "openai"
     print("Using OpenAI GPT-4o")
 elif GEMINI_API_KEY:
     from google import genai as google_genai
+
     gemini_client = google_genai.Client(api_key=GEMINI_API_KEY)
     AI_PROVIDER = "gemini"
     print("Using Gemini 2.5 Flash")
