@@ -388,4 +388,4 @@ def delete_report(filename: str):
 if __name__ == "__main__":
     print(f"Reports directory: {REPORTS_DIR.resolve()}")
     print("EBAY_HEADLESS =", os.environ.get("EBAY_HEADLESS"))
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)
