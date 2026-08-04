@@ -6,6 +6,7 @@ AISaleAnalyst — main entry point.
 Run
 ---
     python main.py
+    python main.py --dev              # dev mode: cap to 20 items, cheaper AI model, no emails
 
 The script prompts for an estate-sale listing URL, downloads images via
 :mod:`scrapers.ListingExtractor`, analyses each image with the configured
@@ -17,12 +18,20 @@ Programmatic use (webapp.py)
 ``main()`` can also be called directly instead of run from the CLI, e.g.
 from ``webapp.py``:
 
-    main(url_override="https://www.estatesales.net/...", non_interactive=True)
+    main(url_override="https://www.estatesales.net/...", non_interactive=True, dev_mode_override=True)
 
 - ``url_override`` supplies the listing URL instead of an ``input()`` prompt.
 - ``non_interactive=True`` suppresses the "resume from previous run?" prompt
   and auto-resumes from any existing progress file instead (safer default
   for an unattended web request than silently discarding partial progress).
+- ``dev_mode_override`` turns dev mode on/off for this run specifically
+  (caps processing to 20 items -- including how many images get
+  downloaded in the first place -- and switches to the cheaper AI model
+  configured for dev use, same as the CLI's ``--dev`` flag). Pass
+  ``True``/``False`` to force it either way for this call, or leave it as
+  ``None`` (the default) to fall back to whatever ``core.config.DEV_MODE``
+  says. See ``_apply_dev_mode_override()`` below for why this needs to
+  patch module attributes rather than just flipping a local variable.
 - On success, ``main()`` returns the path to the generated HTML report
   (``str``), or ``None`` if the pipeline stopped early (no images found,
   nothing identified, etc).
@@ -75,6 +84,79 @@ from core.ebay import scrape_ebay_comps, close_ebay_session
 from core.report import generate_report
 from core.vision import analyze_image
 from ListingExtractor import identifySite
+
+# ---------------------------------------------------------------------------
+# Dev-mode override plumbing
+# ---------------------------------------------------------------------------
+
+
+def _apply_dev_mode_override(enabled: bool | None) -> dict:
+    """
+    Temporarily force ``DEV_MODE`` to *enabled* for the duration of this
+    run, across every module that reads it, returning the previous values
+    so ``_restore_dev_mode_override`` can put them back afterward.
+
+    Why this can't just be a local variable
+    ----------------------------------------
+    ``main.py`` (and, per the "cheaper AI model" behavior DEV_MODE is
+    documented to trigger, ``core/vision.py`` too) picks up ``DEV_MODE``
+    via ``from core.config import DEV_MODE`` -- that copies the *value* of
+    ``core.config.DEV_MODE`` into each importing module's own namespace at
+    import time. Reassigning ``core.config.DEV_MODE`` later would not be
+    seen by a bare ``DEV_MODE`` reference inside ``core/vision.py``,
+    because that name now lives in ``core.vision``'s namespace, not
+    ``core.config``'s.
+
+    What *does* work is patching the attribute directly on each module
+    that imported it, e.g. ``vision_module.DEV_MODE = True``. Python
+    resolves a bare global name against its *own defining module's*
+    ``__dict__`` at call time (not at ``def`` time), so this takes effect
+    immediately for every function in that module -- which is exactly what
+    lets a single ``main()`` call force dev mode on/off per run instead of
+    only via a process-wide config edit + restart.
+
+    Parameters
+    ----------
+    enabled:
+        ``True``/``False`` to force dev mode for this run, or ``None`` to
+        make this a no-op and just use whatever ``core.config.DEV_MODE``
+        already says (the CLI's default, unadorned behavior).
+
+    Returns
+    -------
+    dict
+        ``{module: previous_DEV_MODE_value}`` for every module that got
+        patched -- pass this straight to ``_restore_dev_mode_override``.
+        Empty when *enabled* is ``None``.
+    """
+    if enabled is None:
+        return {}
+
+    import core.config as config_module
+    modules_to_patch = [config_module]
+    try:
+        import core.vision as vision_module
+        modules_to_patch.append(vision_module)
+    except ImportError:
+        pass
+
+    previous: dict = {}
+    for mod in modules_to_patch:
+        if hasattr(mod, "DEV_MODE"):
+            previous[mod] = mod.DEV_MODE
+            mod.DEV_MODE = enabled
+    return previous
+
+
+def _restore_dev_mode_override(previous: dict) -> None:
+    """Undo `_apply_dev_mode_override` -- put every patched module's
+    DEV_MODE back to what it was before this run. Important in
+    long-running processes (webapp.py's worker thread runs many jobs back
+    to back) so a dev-mode job doesn't leave dev mode "stuck on" for the
+    next, unrelated job."""
+    for mod, value in previous.items():
+        mod.DEV_MODE = value
+
 
 # ---------------------------------------------------------------------------
 # Duplicates Excel report generator
@@ -206,6 +288,7 @@ def main(
     max_images_override: int | None = None,
     url_override: str | None = None,
     non_interactive: bool = False,
+    dev_mode_override: bool | None = None,
 ) -> str | None:
     """
     Run the full AISaleAnalyst pipeline end-to-end.
@@ -214,6 +297,8 @@ def main(
     ----------
     max_images_override:
         Temporarily override ``core.config.MAX_IMAGES`` for this run.
+        Independent of dev mode's own 20-item cap -- if both apply, the
+        lower of the two wins (dev mode's cap is applied on top).
     url_override:
         Estate listing URL to process. If given, the interactive
         ``input("Enter Estate listing URL: ")`` prompt is skipped — this is
@@ -223,6 +308,13 @@ def main(
         If True, suppress the "resume from previous run?" prompt and
         auto-resume from any existing progress file instead of asking.
         Set this whenever ``main()`` is called from a non-terminal context.
+    dev_mode_override:
+        ``True``/``False`` to force dev mode on/off for this run
+        specifically (caps to 20 items -- including how many images get
+        downloaded -- and switches to the cheaper dev AI model), or
+        ``None`` (default) to use whatever ``core.config.DEV_MODE`` is
+        currently set to. See ``_apply_dev_mode_override`` for the
+        mechanics of how this reaches other modules like ``core/vision.py``.
 
     Returns
     -------
@@ -241,384 +333,396 @@ def main(
     """
     from pathlib import Path
 
-    effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
-    if DEV_MODE:
-        effective_max = min(effective_max, 20)
+    effective_dev_mode = dev_mode_override if dev_mode_override is not None else DEV_MODE
+    _dev_mode_patch_state = _apply_dev_mode_override(dev_mode_override)
+    try:
+        effective_max = max_images_override if max_images_override is not None else MAX_IMAGES
+        if effective_dev_mode:
+            effective_max = min(effective_max, 20)
 
-    if DEV_MODE:
-        print("\n" + "="*60)
-        print("⚠️  DEV_MODE IS ACTIVE  ⚠️")
-        print("="*60)
-        print(f"• Items capped to: {effective_max} (DEV_MODE max is 20)")
-        print(f"• Emails marked as DEV_MODE test")
-        print("• Model swapped to cheaper alternative")
-        print("="*60 + "\n")
+        if effective_dev_mode:
+            print("\n" + "="*60)
+            print("⚠️  DEV_MODE IS ACTIVE  ⚠️")
+            print("="*60)
+            print(f"• Items capped to: {effective_max} (DEV_MODE max is 20)")
+            print(f"• Emails marked as DEV_MODE test")
+            print("• Model swapped to cheaper alternative")
+            print("="*60 + "\n")
 
-    # --- Resolve images folder
-    images_folder = IMAGES_FOLDER
-    url = None
-    if images_folder is None:
-        if url_override:
-            url = url_override.strip()
-        else:
-            url = input("Enter Estate listing URL: ").strip()
-
-        # Determine the target output folder based on URL domain
-        if "estatesales.net" in url:
-            target_folder = "EstateSaleNetOutput"
-        elif "estatesales.org" in url:
-            target_folder = "EstateSalesOrgOutput"
-        elif "maxsold.com" in url:
-            target_folder = "MaxSoldOutput"
-        else:
-            raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")
-
-        import shutil
-        if Path(target_folder).exists():
-            print(f"Clearing old data from '{target_folder}'...")
-            shutil.rmtree(target_folder, ignore_errors=True)
-
-        images_folder = identifySite(url, max_images=effective_max)
-
-        last_url_file = Path(target_folder) / "last_url.txt"
-        # Save the last URL to the directory for future runs
-        try:
-            Path(images_folder).mkdir(parents=True, exist_ok=True)
-            last_url_file.write_text(url, encoding="utf-8")
-        except Exception as e:
-            print(f"Warning: Could not save last URL metadata: {e}")
-    else:
-        last_url_file = Path(images_folder) / "last_url.txt"
-        if last_url_file.exists():
-            try:
-                url = last_url_file.read_text(encoding="utf-8").strip()
-            except Exception:
-                pass
-
-    folder      = Path(images_folder)
-    extensions  = {".jpg", ".jpeg", ".png", ".webp"}
-
-    image_files = sorted(
-        f for f in folder.iterdir() if f.suffix.lower() in extensions
-    )[:effective_max]
-
-    if not image_files:
-        print(f"No images found in {images_folder}")
-        return None
-
-    print(f"Found {len(image_files)} images. Starting analysis...\n")
-
-    # --- Check for existing progress file
-    progress_file = folder / "vision_progress.json"
-    cached_data = {}
-    if progress_file.exists():
-        if non_interactive:
-            # No terminal to ask from (e.g. driven by webapp.py) — resuming
-            # is the safer default over silently discarding partial progress.
-            ans = 'y'
-            print(f"Found existing progress file '{progress_file.name}'. Auto-resuming (non-interactive mode).")
-        else:
-            ans = input(f"Found existing progress file '{progress_file.name}'. Resume from previous run? (y/n) [n]: ").strip().lower()
-        if ans == 'y':
-            try:
-                with open(progress_file, "r", encoding="utf-8") as f:
-                    progress_list = json.load(f)
-                    for item in progress_list:
-                        # Use resolved path string as cache key
-                        cached_data[str(Path(item["image"]).resolve())] = item
-                print(f"Resuming run. Loaded {len(cached_data)} cached image analyses.")
-            except Exception as e:
-                print(f"Error reading progress file, starting fresh: {e}")
-
-    raw_results: list[dict] = []
-    skipped_results: list[dict] = []
-
-    # Process cached entries
-    images_to_analyze = []
-    for img_path in image_files:
-        resolved_path_str = str(img_path.resolve())
-        if resolved_path_str in cached_data:
-            item = cached_data[resolved_path_str]
-            if item.get("ai", {}).get("skip"):
-                skipped_results.append(item)
+        # --- Resolve images folder
+        images_folder = IMAGES_FOLDER
+        url = None
+        if images_folder is None:
+            if url_override:
+                url = url_override.strip()
             else:
-                raw_results.append(item)
+                url = input("Enter Estate listing URL: ").strip()
+
+            # Determine the target output folder based on URL domain
+            if "estatesales.net" in url:
+                target_folder = "EstateSaleNetOutput"
+            elif "estatesales.org" in url:
+                target_folder = "EstateSalesOrgOutput"
+            elif "maxsold.com" in url:
+                target_folder = "MaxSoldOutput"
+            else:
+                raise ValueError(f"Unsupported URL domain: '{url}'. Supported platforms are EstateSales.net, EstateSales.org, and MaxSold.com")
+
+            import shutil
+            if Path(target_folder).exists():
+                print(f"Clearing old data from '{target_folder}'...")
+                shutil.rmtree(target_folder, ignore_errors=True)
+
+            # effective_max already carries the dev-mode 20-item cap, so
+            # dev mode limits how many images get downloaded here too, not
+            # just how many get analyzed afterward.
+            images_folder = identifySite(url, max_images=effective_max)
+
+            last_url_file = Path(target_folder) / "last_url.txt"
+            # Save the last URL to the directory for future runs
+            try:
+                Path(images_folder).mkdir(parents=True, exist_ok=True)
+                last_url_file.write_text(url, encoding="utf-8")
+            except Exception as e:
+                print(f"Warning: Could not save last URL metadata: {e}")
         else:
-            images_to_analyze.append(img_path)
-
-    # If there are new images to analyze, process them in parallel
-    if images_to_analyze:
-        print(f"Starting parallel analysis of {len(images_to_analyze)} remaining images with {VISION_WORKERS} workers...\n")
-
-        results_lock = threading.Lock()
-        counter = len(cached_data)
-        total_images = len(image_files)
-
-        def process_image(img_path, index):
-            nonlocal counter
-            # Stagger startup times slightly to avoid immediate rate limit spikes
-            time.sleep((index % VISION_WORKERS) * 0.15)
-
-            ai_result = analyze_image(str(img_path))
-            thumb_data = image_to_base64(str(img_path))
-
-            with results_lock:
-                counter += 1
-                if ai_result.get("skip"):
-                    skip_reason = ai_result.get("skip_reason", "Unknown reason")
-                    print(f"[{counter}/{total_images}] {img_path.name} -> Skipped ({skip_reason})")
-                    skipped_results.append({
-                        "image": str(img_path),
-                        "ai":    ai_result,
-                        "thumb": thumb_data,
-                    })
-                else:
-                    pkg_l = ai_result.get("pkg_length_in", 0)
-                    pkg_w = ai_result.get("pkg_width_in", 0)
-                    pkg_h = ai_result.get("pkg_height_in", 0)
-                    pkg_wt = ai_result.get("pkg_weight_lb", 0)
-                    print(
-                        f"[{counter}/{total_images}] {img_path.name} -> "
-                        f"{ai_result.get('item_name')} "
-                        f"| group: {ai_result.get('item_group')} "
-                        f"| {ai_result.get('confidence')}% "
-                        f"| pkg: {pkg_l}x{pkg_w}x{pkg_h} in, {pkg_wt} lbs"
-                    )
-                    raw_results.append({
-                        "image": str(img_path),
-                        "ai":    ai_result,
-                        "thumb": thumb_data,
-                    })
-
-                # Save progress incrementally to disk
-                all_progress = raw_results + skipped_results
+            last_url_file = Path(images_folder) / "last_url.txt"
+            if last_url_file.exists():
                 try:
-                    with open(progress_file, "w", encoding="utf-8") as f:
-                        json.dump(all_progress, f, indent=2)
+                    url = last_url_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+
+        folder      = Path(images_folder)
+        extensions  = {".jpg", ".jpeg", ".png", ".webp"}
+
+        image_files = sorted(
+            f for f in folder.iterdir() if f.suffix.lower() in extensions
+        )[:effective_max]
+
+        if not image_files:
+            print(f"No images found in {images_folder}")
+            return None
+
+        print(f"Found {len(image_files)} images. Starting analysis...\n")
+
+        # --- Check for existing progress file
+        progress_file = folder / "vision_progress.json"
+        cached_data = {}
+        if progress_file.exists():
+            if non_interactive:
+                # No terminal to ask from (e.g. driven by webapp.py) — resuming
+                # is the safer default over silently discarding partial progress.
+                ans = 'y'
+                print(f"Found existing progress file '{progress_file.name}'. Auto-resuming (non-interactive mode).")
+            else:
+                ans = input(f"Found existing progress file '{progress_file.name}'. Resume from previous run? (y/n) [n]: ").strip().lower()
+            if ans == 'y':
+                try:
+                    with open(progress_file, "r", encoding="utf-8") as f:
+                        progress_list = json.load(f)
+                        for item in progress_list:
+                            # Use resolved path string as cache key
+                            cached_data[str(Path(item["image"]).resolve())] = item
+                    print(f"Resuming run. Loaded {len(cached_data)} cached image analyses.")
                 except Exception as e:
-                    print(f"  [Warning] Failed to write progress file: {e}")
+                    print(f"Error reading progress file, starting fresh: {e}")
+
+        raw_results: list[dict] = []
+        skipped_results: list[dict] = []
+
+        # Process cached entries
+        images_to_analyze = []
+        for img_path in image_files:
+            resolved_path_str = str(img_path.resolve())
+            if resolved_path_str in cached_data:
+                item = cached_data[resolved_path_str]
+                if item.get("ai", {}).get("skip"):
+                    skipped_results.append(item)
+                else:
+                    raw_results.append(item)
+            else:
+                images_to_analyze.append(img_path)
+
+        # If there are new images to analyze, process them in parallel
+        if images_to_analyze:
+            print(f"Starting parallel analysis of {len(images_to_analyze)} remaining images with {VISION_WORKERS} workers...\n")
+
+            results_lock = threading.Lock()
+            counter = len(cached_data)
+            total_images = len(image_files)
+
+            def process_image(img_path, index):
+                nonlocal counter
+                # Stagger startup times slightly to avoid immediate rate limit spikes
+                time.sleep((index % VISION_WORKERS) * 0.15)
+
+                ai_result = analyze_image(str(img_path))
+                thumb_data = image_to_base64(str(img_path))
+
+                with results_lock:
+                    counter += 1
+                    if ai_result.get("skip"):
+                        skip_reason = ai_result.get("skip_reason", "Unknown reason")
+                        print(f"[{counter}/{total_images}] {img_path.name} -> Skipped ({skip_reason})")
+                        skipped_results.append({
+                            "image": str(img_path),
+                            "ai":    ai_result,
+                            "thumb": thumb_data,
+                        })
+                    else:
+                        pkg_l = ai_result.get("pkg_length_in", 0)
+                        pkg_w = ai_result.get("pkg_width_in", 0)
+                        pkg_h = ai_result.get("pkg_height_in", 0)
+                        pkg_wt = ai_result.get("pkg_weight_lb", 0)
+                        print(
+                            f"[{counter}/{total_images}] {img_path.name} -> "
+                            f"{ai_result.get('item_name')} "
+                            f"| group: {ai_result.get('item_group')} "
+                            f"| {ai_result.get('confidence')}% "
+                            f"| pkg: {pkg_l}x{pkg_w}x{pkg_h} in, {pkg_wt} lbs"
+                        )
+                        raw_results.append({
+                            "image": str(img_path),
+                            "ai":    ai_result,
+                            "thumb": thumb_data,
+                        })
+
+                    # Save progress incrementally to disk
+                    all_progress = raw_results + skipped_results
+                    try:
+                        with open(progress_file, "w", encoding="utf-8") as f:
+                            json.dump(all_progress, f, indent=2)
+                    except Exception as e:
+                        print(f"  [Warning] Failed to write progress file: {e}")
+
+            import queue
+            task_queue = queue.Queue()
+            for idx, img_path in enumerate(images_to_analyze):
+                task_queue.put((idx, img_path))
+
+            def worker():
+                while True:
+                    try:
+                        idx, img_path = task_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    try:
+                        process_image(img_path, idx)
+                    except Exception as exc:
+                        print(f"  Thread exception: {exc}")
+                    finally:
+                        task_queue.task_done()
+
+            threads = []
+            for _ in range(VISION_WORKERS):
+                t = threading.Thread(target=worker)
+                t.daemon = True
+                t.start()
+                threads.append(t)
+
+            try:
+                for t in threads:
+                    while t.is_alive():
+                        t.join(0.5)
+            except KeyboardInterrupt:
+                print("\n[!] Ctrl+C detected! Shutting down vision workers...")
+                # Empty the queue so threads stop
+                while not task_queue.empty():
+                    try:
+                        task_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                if non_interactive:
+                    # Called programmatically (webapp.py) — raise instead of
+                    # killing the whole process out from under the caller.
+                    raise
+                import sys
+                sys.exit(1)
+        else:
+            print("All images loaded from cache. No new analysis needed.")
+
+        if not raw_results:
+            print("No items identified from images.")
+            return None
+
+        # --- Step 2: Deduplication
+        if USE_DEDUP:
+            print("Running deduplication...")
+            unique_results = deduplicate(raw_results)
+        else:
+            print("Deduplication bypassed (USE_DEDUP=False).")
+            unique_results = raw_results
+
+        # --- Step 2b: Post-dedup name-similarity + visual verification
+        unique_results, merge_log, similar_flags = post_dedup_verify(unique_results)
+
+        # --- Step 3: eBay comps (Multi-threaded HTTP workers)
+        print(f"\nFetching eBay comps for {len(unique_results)} unique items across {EBAY_WORKERS} parallel workers...\n")
+
+        comp_counter = 0
+        total_unique = len(unique_results)
+        print_lock = threading.Lock()
 
         import queue
-        task_queue = queue.Queue()
-        for idx, img_path in enumerate(images_to_analyze):
-            task_queue.put((idx, img_path))
+        ebay_queue = queue.Queue()
+        for item in unique_results:
+            item["_retries"] = 0
+            ebay_queue.put(item)
 
-        def worker():
+        def process_ebay_item(item):
+            nonlocal comp_counter
+
+            query          = item["ai"].get("ebay_search_query") or item["ai"].get("item_name", "")
+            item_name      = item["ai"].get("item_name", "")
+            ai_val_low     = float(item["ai"].get("ai_value_low", 0) or 0)
+            fallback_query = item["ai"].get("ebay_fallback_query")
+            ebay_condition = item["ai"].get("ebay_condition")
+            inclusion_keywords = item["ai"].get("ebay_inclusion_keywords", [])
+            exclusion_keywords = item["ai"].get("ebay_exclusion_keywords", [])
+
+            comps_res = scrape_ebay_comps(
+                None,
+                query,
+                ai_val_low,
+                item_name,
+                fallback_query=fallback_query,
+                ebay_condition=ebay_condition,
+                inclusion_keywords=inclusion_keywords,
+                exclusion_keywords=exclusion_keywords,
+            )
+
+            # Requeue once on 0 results so that collateral victims of a soft-block get retried
+            if comps_res["count"] == 0 and item.get("_retries", 0) < 1:
+                item["_retries"] += 1
+                with print_lock:
+                    print(f"  [Queue] 0 results for '{query}'. Requeuing to retry after potential cooldown.")
+                ebay_queue.put(item)
+                return
+
+            item["comps"] = comps_res
+
+            with print_lock:
+                comp_counter += 1
+                print(
+                    f"[{comp_counter}/{total_unique}] {query}\n"
+                    f"  -> {comps_res['low']} / {comps_res['mean']} / "
+                    f"{comps_res['high']} ({comps_res['count']} sales)"
+                )
+
+        def ebay_worker():
             while True:
                 try:
-                    idx, img_path = task_queue.get_nowait()
+                    item = ebay_queue.get_nowait()
                 except queue.Empty:
                     break
+
                 try:
-                    process_image(img_path, idx)
+                    process_ebay_item(item)
                 except Exception as exc:
-                    print(f"  Thread exception: {exc}")
+                    print(f"  eBay worker exception: {exc}")
                 finally:
-                    task_queue.task_done()
+                    ebay_queue.task_done()
 
         threads = []
-        for _ in range(VISION_WORKERS):
-            t = threading.Thread(target=worker)
-            t.daemon = True
+        for _ in range(EBAY_WORKERS):
+            t = threading.Thread(target=ebay_worker)
             t.start()
             threads.append(t)
 
-        try:
-            for t in threads:
-                while t.is_alive():
-                    t.join(0.5)
-        except KeyboardInterrupt:
-            print("\n[!] Ctrl+C detected! Shutting down vision workers...")
-            # Empty the queue so threads stop
-            while not task_queue.empty():
-                try:
-                    task_queue.get_nowait()
-                except queue.Empty:
-                    break
-            if non_interactive:
-                # Called programmatically (webapp.py) — raise instead of
-                # killing the whole process out from under the caller.
-                raise
-            import sys
-            sys.exit(1)
-    else:
-        print("All images loaded from cache. No new analysis needed.")
+        for t in threads:
+            t.join()
 
-    if not raw_results:
-        print("No items identified from images.")
-        return None
+        # --- Step 4: Generate report
+        import urllib.parse
+        from datetime import datetime
 
-    # --- Step 2: Deduplication
-    if USE_DEDUP:
-        print("Running deduplication...")
-        unique_results = deduplicate(raw_results)
-    else:
-        print("Deduplication bypassed (USE_DEDUP=False).")
-        unique_results = raw_results
-
-    # --- Step 2b: Post-dedup name-similarity + visual verification
-    unique_results, merge_log, similar_flags = post_dedup_verify(unique_results)
-
-    # --- Step 3: eBay comps (Multi-threaded HTTP workers)
-    print(f"\nFetching eBay comps for {len(unique_results)} unique items across {EBAY_WORKERS} parallel workers...\n")
-
-    comp_counter = 0
-    total_unique = len(unique_results)
-    print_lock = threading.Lock()
-
-    import queue
-    ebay_queue = queue.Queue()
-    for item in unique_results:
-        item["_retries"] = 0
-        ebay_queue.put(item)
-
-    def process_ebay_item(item):
-        nonlocal comp_counter
-
-        query          = item["ai"].get("ebay_search_query") or item["ai"].get("item_name", "")
-        item_name      = item["ai"].get("item_name", "")
-        ai_val_low     = float(item["ai"].get("ai_value_low", 0) or 0)
-        fallback_query = item["ai"].get("ebay_fallback_query")
-        ebay_condition = item["ai"].get("ebay_condition")
-        inclusion_keywords = item["ai"].get("ebay_inclusion_keywords", [])
-        exclusion_keywords = item["ai"].get("ebay_exclusion_keywords", [])
-
-        comps_res = scrape_ebay_comps(
-            None,
-            query,
-            ai_val_low,
-            item_name,
-            fallback_query=fallback_query,
-            ebay_condition=ebay_condition,
-            inclusion_keywords=inclusion_keywords,
-            exclusion_keywords=exclusion_keywords,
-        )
-
-        # Requeue once on 0 results so that collateral victims of a soft-block get retried
-        if comps_res["count"] == 0 and item.get("_retries", 0) < 1:
-            item["_retries"] += 1
-            with print_lock:
-                print(f"  [Queue] 0 results for '{query}'. Requeuing to retry after potential cooldown.")
-            ebay_queue.put(item)
-            return
-
-        item["comps"] = comps_res
-
-        with print_lock:
-            comp_counter += 1
-            print(
-                f"[{comp_counter}/{total_unique}] {query}\n"
-                f"  -> {comps_res['low']} / {comps_res['mean']} / "
-                f"{comps_res['high']} ({comps_res['count']} sales)"
-            )
-
-    def ebay_worker():
-        while True:
+        sale_info = {}
+        sale_id = "Unknown"
+        links_file = Path(images_folder) / "links.json"
+        if links_file.exists():
             try:
-                item = ebay_queue.get_nowait()
-            except queue.Empty:
-                break
+                with open(links_file, "r", encoding="utf-8") as f:
+                    sale_info = json.load(f)
+                    sale_id = str(sale_info.get("sale_id", "Unknown"))
+            except Exception as e:
+                print(f"Warning: Could not read links.json: {e}")
 
+        if sale_id == "Unknown" and url:
             try:
-                process_ebay_item(item)
-            except Exception as exc:
-                print(f"  eBay worker exception: {exc}")
-            finally:
-                ebay_queue.task_done()
-
-    threads = []
-    for _ in range(EBAY_WORKERS):
-        t = threading.Thread(target=ebay_worker)
-        t.start()
-        threads.append(t)
-
-    for t in threads:
-        t.join()
-
-    # --- Step 4: Generate report
-    import urllib.parse
-    from datetime import datetime
-
-    sale_info = {}
-    sale_id = "Unknown"
-    links_file = Path(images_folder) / "links.json"
-    if links_file.exists():
-        try:
-            with open(links_file, "r", encoding="utf-8") as f:
-                sale_info = json.load(f)
-                sale_id = str(sale_info.get("sale_id", "Unknown"))
-        except Exception as e:
-            print(f"Warning: Could not read links.json: {e}")
-
-    if sale_id == "Unknown" and url:
-        try:
-            path = urllib.parse.urlparse(url.strip()).path
-            segments = [s for s in path.split("/") if s.isdigit()]
-            if segments:
-                sale_id = segments[-1]
-        except Exception:
-            pass
-
-    # Build dynamic filename prefix
-    filename_prefix = "EstateReport"
-    if sale_info.get("company") and sale_info.get("city"):
-        import re
-        safe_company = re.sub(r'[^A-Za-z0-9]', '', sale_info["company"])[:25]
-        safe_city = re.sub(r'[^A-Za-z0-9]', '', sale_info["city"])[:20]
-
-        dates_str = ""
-        if sale_info.get("start_date"):
-            try:
-                from datetime import datetime as dt
-                s_date = dt.strptime(sale_info["start_date"], "%Y-%m-%d")
-                dates_str = f"_{s_date.strftime('%b%d')}"
-                if sale_info.get("end_date") and sale_info["end_date"] != sale_info["start_date"]:
-                    e_date = dt.strptime(sale_info["end_date"], "%Y-%m-%d")
-                    dates_str += f"-{e_date.strftime('%d')}"
+                path = urllib.parse.urlparse(url.strip()).path
+                segments = [s for s in path.split("/") if s.isdigit()]
+                if segments:
+                    sale_id = segments[-1]
             except Exception:
                 pass
 
-        parts = [p for p in [safe_company, safe_city] if p]
-        if parts:
-            filename_prefix = "_".join(parts) + dates_str
+        # Build dynamic filename prefix
+        filename_prefix = "EstateReport"
+        if sale_info.get("company") and sale_info.get("city"):
+            import re
+            safe_company = re.sub(r'[^A-Za-z0-9]', '', sale_info["company"])[:25]
+            safe_city = re.sub(r'[^A-Za-z0-9]', '', sale_info["city"])[:20]
 
-    current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
+            dates_str = ""
+            if sale_info.get("start_date"):
+                try:
+                    from datetime import datetime as dt
+                    s_date = dt.strptime(sale_info["start_date"], "%Y-%m-%d")
+                    dates_str = f"_{s_date.strftime('%b%d')}"
+                    if sale_info.get("end_date") and sale_info["end_date"] != sale_info["start_date"]:
+                        e_date = dt.strptime(sale_info["end_date"], "%Y-%m-%d")
+                        dates_str += f"-{e_date.strftime('%d')}"
+                except Exception:
+                    pass
 
-    # Check if a custom report directory is provided in the environment
-    from core.config import REPORT_OUTPUT_DIR, EMAIL_REPORTS
+            parts = [p for p in [safe_company, safe_city] if p]
+            if parts:
+                filename_prefix = "_".join(parts) + dates_str
 
-    if REPORT_OUTPUT_DIR:
-        out_dir = Path(REPORT_OUTPUT_DIR)
-    else:
-        out_dir = Path(OUTPUT_FOLDER)
+        current_time = datetime.now().strftime("%Y-%m-%d_%H%M")
 
-    # Ensure output folder exists
-    out_dir.mkdir(parents=True, exist_ok=True)
+        # Check if a custom report directory is provided in the environment
+        from core.config import REPORT_OUTPUT_DIR, EMAIL_REPORTS
 
-    final_output_path = str(out_dir / f"{filename_prefix}_ID-{sale_id}_{current_time}.html")
+        if REPORT_OUTPUT_DIR:
+            out_dir = Path(REPORT_OUTPUT_DIR)
+        else:
+            out_dir = Path(OUTPUT_FOLDER)
 
-    generate_report(unique_results, final_output_path, skipped_items=skipped_results, sale_info=sale_info)
-    print(f"\nReport successfully saved to {final_output_path}")
+        # Ensure output folder exists
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Step 5: Generate Duplicates Excel report (if enabled)
-    if GENERATE_DUPLICATES_REPORT:
-        try:
-            xlsx_path = str(out_dir / f"Duplicate_and_Probable_Duplicates_EstateReport_{sale_id}.xlsx")
-            _generate_duplicates_xlsx(
-                unique_results, merge_log, similar_flags, xlsx_path,
-            )
-            print(f"Duplicates report saved to {xlsx_path}")
-        except Exception as exc:
-            print(f"Warning: Failed to generate duplicates report: {exc}")
+        final_output_path = str(out_dir / f"{filename_prefix}_ID-{sale_id}_{current_time}.html")
 
-    if EMAIL_REPORTS:
-        from core.email_sender import send_report_email
-        send_report_email(final_output_path, url=url, items=unique_results)
+        generate_report(unique_results, final_output_path, skipped_items=skipped_results, sale_info=sale_info)
+        print(f"\nReport successfully saved to {final_output_path}")
 
-    # Close the shared curl_cffi session to allow clean exit of the Python process
-    close_ebay_session()
+        # --- Step 5: Generate Duplicates Excel report (if enabled)
+        if GENERATE_DUPLICATES_REPORT:
+            try:
+                xlsx_path = str(out_dir / f"Duplicate_and_Probable_Duplicates_EstateReport_{sale_id}.xlsx")
+                _generate_duplicates_xlsx(
+                    unique_results, merge_log, similar_flags, xlsx_path,
+                )
+                print(f"Duplicates report saved to {xlsx_path}")
+            except Exception as exc:
+                print(f"Warning: Failed to generate duplicates report: {exc}")
 
-    return final_output_path
+        if EMAIL_REPORTS:
+            from core.email_sender import send_report_email
+            send_report_email(final_output_path, url=url, items=unique_results)
+
+        # Close the shared curl_cffi session to allow clean exit of the Python process
+        close_ebay_session()
+
+        return final_output_path
+    finally:
+        # Always undo the dev-mode module patches, even on an early
+        # return / raised exception -- otherwise a dev-mode run could
+        # leave dev mode "stuck on" for whatever runs next in this
+        # process (e.g. the next job in webapp.py's worker thread).
+        _restore_dev_mode_override(_dev_mode_patch_state)
 
 
 if __name__ == "__main__":
@@ -641,6 +745,11 @@ if __name__ == "__main__":
             max_images_override=args.max_images,
             url_override=args.url,
             non_interactive=args.non_interactive,
+            # True forces dev mode on for this run; leaving this as None
+            # when --dev isn't passed means "use whatever core.config.DEV_MODE
+            # already says" rather than forcing it off, so a .env-level
+            # DEV_MODE=True still works without needing --dev every time.
+            dev_mode_override=True if args.dev else None,
         )
     finally:
         end_dt = datetime.now()

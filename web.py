@@ -34,6 +34,11 @@ Design notes
   just come back with 0 comps). If you need the visible/interactive
   fallback, run main.py directly from a terminal instead of through this
   app.
+- The job detail page polls a small JSON endpoint (/jobs/<id>/log) via
+  JavaScript and patches just the log/status DOM in place, instead of a
+  <meta http-equiv="refresh"> full-page reload -- that used to yank the
+  scroll position back to the top every few seconds. Polling stops once
+  the job reaches a terminal status (done/error).
 """
 
 import os
@@ -76,6 +81,7 @@ _jobs_lock = threading.Lock()
 _job_queue: "queue.Queue[str]" = queue.Queue()
 
 _MAX_LOG_LINES = 2000  # per job, to keep memory bounded on long runs
+_LOG_TAIL_FOR_UI = 500  # lines sent to the browser per poll -- plenty for a live tail
 
 
 class _JobLogWriter:
@@ -133,11 +139,17 @@ def _run_job(job_id: str) -> None:
         job["status"] = "running"
         job["started_at"] = datetime.now().isoformat(timespec="seconds")
         url = job["url"]
+        dev_mode = job["dev_mode"]
 
     real_stdout = sys.stdout
     sys.stdout = _JobLogWriter(job_id, also_forward=real_stdout)
     try:
-        report_path = pipeline.main(url_override=url, non_interactive=True)
+        # dev_mode_override=True caps this run to 20 items (including how
+        # many images get downloaded) and switches to the cheaper dev AI
+        # model, same as running `python main.py --dev` from a terminal.
+        # False forces dev mode off for this run even if core.config.DEV_MODE
+        # is on. See main.py's _apply_dev_mode_override for the mechanics.
+        report_path = pipeline.main(url_override=url, non_interactive=True, dev_mode_override=dev_mode)
         with _jobs_lock:
             job = _jobs[job_id]
             job["report_path"] = report_path
@@ -175,12 +187,12 @@ _PAGE = """
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.4; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; margin-top: 2.5rem; border-bottom: 1px solid #8888; padding-bottom: .3rem;}
-  form { display: flex; gap: .5rem; }
+  form { display: flex; flex-direction: column; gap: .3rem; }
   input[type=url] { flex: 1; padding: .5rem; font-size: 1rem; }
   button { padding: .5rem 1rem; font-size: 1rem; cursor: pointer; }
   table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
   th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #8884; font-size: .9rem; vertical-align: top; }
-  .status { font-weight: 600; padding: .1rem .5rem; border-radius: .3rem; font-size: .8rem; }
+  .status { font-weight: 600; padding: .1rem .5rem; border-radius: .3rem; font-size: .8rem; transition: background-color .3s ease; }
   .status-queued { background: #8884; }
   .status-running { background: #f0ad4e55; }
   .status-done { background: #5cb85c55; }
@@ -191,6 +203,8 @@ _PAGE = """
   .empty { opacity: .6; font-style: italic; }
   button.danger { background: #d9534f; color: #fff; border: none; border-radius: .3rem; padding: .3rem .7rem; font-size: .8rem; }
   button.danger:hover { background: #c9302c; }
+  .dev-toggle { display: flex; align-items: center; gap: .35rem; font-size: .85rem; margin-top: .5rem; cursor: pointer; user-select: none; }
+  .dev-badge { font-weight: 600; padding: .1rem .4rem; border-radius: .3rem; font-size: .7rem; background: #9b59b655; margin-left: .4rem; }
 </style>
 </head>
 <body>
@@ -198,54 +212,132 @@ _PAGE = """
   <p class="muted">eBay scraping runs headless on this server — captchas / sign-in walls can't be solved interactively here. Run main.py directly from a terminal if you hit persistent blocks.</p>
 
   <form method="post" action="{{ url_for('add_job') }}">
-    <input type="url" name="url" placeholder="Paste an EstateSales.net / .org / MaxSold listing URL" required>
-    <button type="submit">Queue it</button>
+    <div style="display:flex; gap:.5rem;">
+      <input type="url" name="url" placeholder="Paste an EstateSales.net / .org / MaxSold listing URL" required style="flex:1; padding:.5rem; font-size:1rem;">
+      <button type="submit">Queue it</button>
+    </div>
+    <label class="dev-toggle">
+      <input type="checkbox" name="dev_mode" value="1">
+      Dev mode (caps to 20 items, downloads only 20 images, uses the cheaper AI model)
+    </label>
   </form>
 
   <h2>Jobs</h2>
-  {% if jobs %}
-  <table>
-    <tr><th>URL</th><th>Status</th><th>Queued</th><th>Report</th></tr>
-    {% for job in jobs %}
-    <tr>
-      <td><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.url }}</a></td>
-      <td><span class="status status-{{ job.status }}">{{ job.status }}</span>
-          {% if job.status == 'error' %}<div class="muted">{{ job.error }}</div>{% endif %}</td>
-      <td class="muted">{{ job.created_at }}</td>
-      <td>
-        {% if job.report_path %}<a href="{{ url_for('view_report', filename=job.report_path) }}" target="_blank">Open report</a>{% endif %}
-        <div><a href="{{ url_for('job_detail', job_id=job.id) }}">details / log</a></div>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-  <p class="empty">No jobs yet — paste a URL above.</p>
-  {% endif %}
+  <div id="jobs-container">{{ jobs_html | safe }}</div>
 
   <h2>Reports</h2>
-  {% if reports %}
-  <table>
-    <tr><th>File</th><th>Generated</th><th></th><th></th></tr>
-    {% for r in reports %}
-    <tr>
-      <td>{{ r.name }}</td>
-      <td class="muted">{{ r.modified }}</td>
-      <td><a href="{{ url_for('view_report', filename=r.name) }}" target="_blank">View</a></td>
-      <td>
-        <form method="post" action="{{ url_for('delete_report', filename=r.name) }}"
-              onsubmit="return confirm('Delete {{ r.name }}? This cannot be undone.');" style="display:inline">
-          <button type="submit" class="danger">Delete</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-  <p class="empty">No reports generated yet.</p>
-  {% endif %}
+  <div id="reports-container">{{ reports_html | safe }}</div>
+
+<script>
+(function () {
+  const jobsBox = document.getElementById("jobs-container");
+  const reportsBox = document.getElementById("reports-container");
+  let lastJobsHtml = jobsBox.innerHTML;
+  let lastReportsHtml = reportsBox.innerHTML;
+  let pollHandle = null;
+
+  async function fetchPartial(url) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch (e) {
+      return null; // transient network hiccup -- just try again next tick
+    }
+  }
+
+  async function poll() {
+    const [jobsHtml, reportsHtml] = await Promise.all([
+      fetchPartial("{{ url_for('partial_jobs') }}"),
+      fetchPartial("{{ url_for('partial_reports') }}"),
+    ]);
+    // Only touch the DOM when the rendered HTML actually differs --
+    // avoids re-rendering (and losing e.g. a mid-click) on every tick
+    // when nothing on the dashboard has actually changed.
+    if (jobsHtml !== null && jobsHtml !== lastJobsHtml) {
+      jobsBox.innerHTML = jobsHtml;
+      lastJobsHtml = jobsHtml;
+    }
+    if (reportsHtml !== null && reportsHtml !== lastReportsHtml) {
+      reportsBox.innerHTML = reportsHtml;
+      lastReportsHtml = reportsHtml;
+    }
+  }
+
+  function startPolling() {
+    if (pollHandle) return;
+    poll();
+    pollHandle = setInterval(poll, 2500);
+  }
+
+  function stopPolling() {
+    if (pollHandle) {
+      clearInterval(pollHandle);
+      pollHandle = null;
+    }
+  }
+
+  // Pause polling while the tab isn't visible (saves requests when the
+  // dashboard is just sitting in a background tab), and catch up
+  // immediately when it becomes visible again.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      startPolling();
+    }
+  });
+
+  startPolling();
+})();
+</script>
 </body>
 </html>
+"""
+
+_JOBS_SECTION = """
+{% if jobs %}
+<table>
+  <tr><th>URL</th><th>Status</th><th>Queued</th><th>Report</th></tr>
+  {% for job in jobs %}
+  <tr>
+    <td><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.url }}</a>{% if job.dev_mode %}<span class="dev-badge">DEV</span>{% endif %}</td>
+    <td><span class="status status-{{ job.status }}">{{ job.status }}</span>
+        {% if job.status == 'error' %}<div class="muted">{{ job.error }}</div>{% endif %}</td>
+    <td class="muted">{{ job.created_at }}</td>
+    <td>
+      {% if job.report_path %}<a href="{{ url_for('view_report', filename=job.report_path) }}" target="_blank">Open report</a>{% endif %}
+      <div><a href="{{ url_for('job_detail', job_id=job.id) }}">details / log</a></div>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No jobs yet — paste a URL above.</p>
+{% endif %}
+"""
+
+_REPORTS_SECTION = """
+{% if reports %}
+<table>
+  <tr><th>File</th><th>Generated</th><th></th><th></th></tr>
+  {% for r in reports %}
+  <tr>
+    <td>{{ r.name }}</td>
+    <td class="muted">{{ r.modified }}</td>
+    <td><a href="{{ url_for('view_report', filename=r.name) }}" target="_blank">View</a></td>
+    <td>
+      <form method="post" action="{{ url_for('delete_report', filename=r.name) }}"
+            onsubmit="return confirm('Delete {{ r.name }}? This cannot be undone.');" style="display:inline">
+        <button type="submit" class="danger">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No reports generated yet.</p>
+{% endif %}
 """
 
 _JOB_PAGE = """
@@ -254,20 +346,111 @@ _JOB_PAGE = """
 <head>
 <meta charset="utf-8">
 <title>Job {{ job.id[:8] }}</title>
-<meta http-equiv="refresh" content="4">
 <style>
+  /* Matches the main page's :root rule -- without it this page ignores
+     the OS/browser dark-mode preference and always renders light, while
+     the main page (which has this rule) follows the system setting. That
+     mismatch is what made the two pages look like different themes. */
+  :root { color-scheme: light dark; }
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-  .log { background: #1118; color: #ddd; padding: .8rem; font-family: ui-monospace, monospace; font-size: .8rem; white-space: pre-wrap; border-radius: .4rem; max-height: 70vh; overflow-y: auto; }
+  .status { font-weight: 600; padding: .1rem .5rem; border-radius: .3rem; font-size: .85rem; transition: background-color .3s ease; }
+  .status-queued { background: #8884; }
+  .status-running { background: #f0ad4e55; }
+  .status-done { background: #5cb85c55; }
+  .status-error { background: #d9534f55; }
+  .muted { opacity: .65; font-size: .85rem; }
+  .log {
+    background: #1118; color: #ddd; padding: .8rem; font-family: ui-monospace, monospace;
+    font-size: .8rem; white-space: pre-wrap; border-radius: .4rem; max-height: 70vh;
+    overflow-y: auto; scroll-behavior: smooth;
+  }
   a { color: #2a7fdb; }
+  .dev-badge { font-weight: 600; padding: .1rem .4rem; border-radius: .3rem; font-size: .7rem; background: #9b59b655; margin-left: .5rem; vertical-align: middle; }
 </style>
 </head>
 <body>
   <p><a href="{{ url_for('index') }}">&larr; back</a></p>
-  <h1>{{ job.url }}</h1>
-  <p>Status: <b>{{ job.status }}</b>{% if job.error %} — {{ job.error }}{% endif %}</p>
-  {% if job.report_path %}<p><a href="{{ url_for('view_report', filename=job.report_path) }}" target="_blank">Open generated report</a></p>{% endif %}
-  <p class="muted">This page auto-refreshes every 4s while the job runs.</p>
-  <div class="log">{{ log_text }}</div>
+  <h1>{{ job.url }}{% if job.dev_mode %}<span class="dev-badge">DEV</span>{% endif %}</h1>
+  <p>Status: <span id="status-badge" class="status status-{{ job.status }}">{{ job.status }}</span>
+     <span id="error-text" class="muted">{% if job.error %} — {{ job.error }}{% endif %}</span></p>
+  <p id="report-link">{% if job.report_path %}<a href="{{ url_for('view_report', filename=job.report_path) }}" target="_blank">Open generated report</a>{% endif %}</p>
+  <p class="muted" id="poll-note">Live log — updates automatically while the job runs.</p>
+  <div class="log" id="log-box">{{ log_text }}</div>
+
+<script>
+(function () {
+  const jobId = {{ job.id | tojson }};
+  const logBox = document.getElementById("log-box");
+  const statusBadge = document.getElementById("status-badge");
+  const errorText = document.getElementById("error-text");
+  const reportLink = document.getElementById("report-link");
+  const pollNote = document.getElementById("poll-note");
+  const TERMINAL = new Set(["done", "error"]);
+  let pollHandle = null;
+  let lastLog = logBox.textContent;   // seed with the server-rendered log so the first poll doesn't re-render it unnecessarily
+  let lastStatus = statusBadge.textContent.trim();
+
+  function nearBottom() {
+    // Treat "within 40px of the bottom" as still following the tail --
+    // this is what lets us auto-scroll on new lines without yanking the
+    // view away from someone who's scrolled up to read earlier output.
+    return logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 40;
+  }
+
+  async function poll() {
+    let data;
+    try {
+      const res = await fetch(`/jobs/${jobId}/log`, { cache: "no-store" });
+      if (!res.ok) return;
+      data = await res.json();
+    } catch (e) {
+      return; // transient network hiccup -- just try again next tick
+    }
+
+    const newLog = data.log || "(no output yet)";
+    // Only touch the DOM when the content actually changed -- writing the
+    // same textContent every 2s still forces a reflow/repaint for no
+    // visible benefit, which is most of what made this feel choppy.
+    if (newLog !== lastLog) {
+      const wasNearBottom = nearBottom();
+      logBox.textContent = newLog;
+      lastLog = newLog;
+      if (wasNearBottom) {
+        // Animated scroll instead of an instant jump -- smoother when new
+        // lines land while you're already watching the tail.
+        logBox.scrollTo({ top: logBox.scrollHeight, behavior: "smooth" });
+      }
+    }
+
+    if (data.status !== lastStatus) {
+      statusBadge.textContent = data.status;
+      statusBadge.className = "status status-" + data.status;
+      lastStatus = data.status;
+    }
+    errorText.textContent = data.error ? " — " + data.error : "";
+
+    if (data.report_path && !reportLink.querySelector("a")) {
+      const a = document.createElement("a");
+      a.href = "/reports/" + encodeURIComponent(data.report_path);
+      a.target = "_blank";
+      a.textContent = "Open generated report";
+      reportLink.appendChild(a);
+    }
+
+    if (TERMINAL.has(data.status)) {
+      pollNote.textContent = "Job finished.";
+      if (pollHandle) clearInterval(pollHandle);
+    }
+  }
+
+  // Land the view at the tail on first load, then poll until done. 1.5s
+  // feels noticeably more "live" than 2s without adding meaningful load,
+  // since a poll that finds nothing new now skips all DOM work anyway.
+  logBox.scrollTop = logBox.scrollHeight;
+  poll();
+  pollHandle = setInterval(poll, 1500);
+})();
+</script>
 </body>
 </html>
 """
@@ -285,11 +468,33 @@ def _report_file_list():
     return files
 
 
+def _sorted_jobs() -> list[dict]:
+    with _jobs_lock:
+        return sorted(_jobs.values(), key=lambda j: j["created_at"], reverse=True)
+
+
 @app.route("/")
 def index():
-    with _jobs_lock:
-        jobs = sorted(_jobs.values(), key=lambda j: j["created_at"], reverse=True)
-    return render_template_string(_PAGE, jobs=jobs, reports=_report_file_list())
+    jobs_html = render_template_string(_JOBS_SECTION, jobs=_sorted_jobs())
+    reports_html = render_template_string(_REPORTS_SECTION, reports=_report_file_list())
+    return render_template_string(_PAGE, jobs_html=jobs_html, reports_html=reports_html)
+
+
+@app.route("/partial/jobs")
+def partial_jobs():
+    """Renders just the Jobs table (or its empty state) -- polled by the
+    dashboard's JavaScript every 2.5s and swapped into #jobs-container in
+    place, so a job flipping from running -> done shows up without a full
+    page reload."""
+    return render_template_string(_JOBS_SECTION, jobs=_sorted_jobs())
+
+
+@app.route("/partial/reports")
+def partial_reports():
+    """Renders just the Reports table (or its empty state) -- polled
+    alongside partial_jobs so a newly finished report appears here too
+    without a manual refresh."""
+    return render_template_string(_REPORTS_SECTION, reports=_report_file_list())
 
 
 @app.route("/jobs", methods=["POST"])
@@ -298,11 +503,19 @@ def add_job():
     if not url:
         return redirect(url_for("index"))
 
+    # Checked -> force dev mode on for this run (True). Unchecked -> leave
+    # as None so main.py falls back to whatever core.config.DEV_MODE
+    # already says, same as the CLI's default (--dev omitted) behavior --
+    # this deliberately isn't False, so a .env-level DEV_MODE=True isn't
+    # silently overridden just because the box was left unticked.
+    dev_mode = True if request.form.get("dev_mode") else None
+
     job_id = uuid.uuid4().hex
     with _jobs_lock:
         _jobs[job_id] = {
             "id": job_id,
             "url": url,
+            "dev_mode": dev_mode,
             "status": "queued",
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "started_at": None,
@@ -322,19 +535,36 @@ def job_detail(job_id: str):
         if job is None:
             return "Job not found", 404
         job = dict(job)  # shallow copy for rendering outside the lock
-        log_text = "\n".join(job["log"][-500:]) or "(no output yet)"
+        log_text = "\n".join(job["log"][-_LOG_TAIL_FOR_UI:]) or "(no output yet)"
     return render_template_string(_JOB_PAGE, job=job, log_text=log_text)
 
 
 @app.route("/jobs/<job_id>/status")
 def job_status(job_id: str):
-    """JSON status endpoint, for polling from your own tooling if you'd
-    rather not scrape the HTML page."""
+    """JSON status endpoint (no log), for polling from your own tooling if
+    you'd rather not scrape the HTML page."""
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None:
             return jsonify({"error": "not found"}), 404
         return jsonify({k: v for k, v in job.items() if k != "log"})
+
+
+@app.route("/jobs/<job_id>/log")
+def job_log(job_id: str):
+    """JSON status + a tail of the log, polled by the job detail page's
+    JavaScript every 2s to patch the DOM in place (see _JOB_PAGE's
+    <script>) instead of doing a full page reload."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify({
+            "status": job["status"],
+            "error": job["error"],
+            "report_path": job["report_path"],
+            "log": "\n".join(job["log"][-_LOG_TAIL_FOR_UI:]),
+        })
 
 
 @app.route("/reports/<path:filename>")
